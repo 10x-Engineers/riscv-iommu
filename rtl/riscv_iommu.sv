@@ -1,13 +1,13 @@
 // Copyright © 2023 Manuel Rodríguez & Zero-Day Labs, Lda.
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); 
-// you may not use this file except in compliance with the License, 
-// or, at your option, the Apache License version 2.0. 
+// Licensed under the Solderpad Hardware License v 2.1 (the \u201cLicense\u201d);
+// you may not use this file except in compliance with the License,
+// or, at your option, the Apache License version 2.0.
 // You may obtain a copy of the License at https://solderpad.org/licenses/SHL-2.1/.
-// Unless required by applicable law or agreed to in writing, 
-// any work distributed under the License is distributed on an “AS IS” BASIS, 
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
+// Unless required by applicable law or agreed to in writing,
+// any work distributed under the License is distributed on an \u201cAS IS\u201d BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and limitations under the License.
 //
 // Author: Manuel Rodríguez <manuel.cederog@gmail.com>
@@ -20,64 +20,64 @@
 
 module riscv_iommu #(
     // Number of IOTLB entries
-    parameter int unsigned  IOTLB_ENTRIES       = 4,
+    parameter int unsigned  IOTLB_ENTRIES       = 16,
     // Number of DDTC entries
-    parameter int unsigned  DDTC_ENTRIES        = 4,
+    parameter int unsigned  DDTC_ENTRIES        = 8,
     // Number of PDTC entries
-    parameter int unsigned  PDTC_ENTRIES        = 4,
+    parameter int unsigned  PDTC_ENTRIES        = 8,
     // Number of MRIF cache entries (if supported)
     parameter int unsigned  MRIFC_ENTRIES       = 4,
 
     // Include process_id support
-    parameter bit                   InclPC      = 0,
+    parameter bit                   InclPC      = 1,
     // Include AXI4 address boundary check
-    parameter bit                   InclBC      = 0,
+    parameter bit                   InclBC      = 1,
     // Include debug register interface
-    parameter bit                   InclDBG     = 0,
-    
+    parameter bit                   InclDBG     = 1,
+
     // MSI translation support
     parameter rv_iommu::msi_trans_t MSITrans    = rv_iommu::MSI_DISABLED,
     // Interrupt Generation Support
-    parameter rv_iommu::igs_t       IGS         = rv_iommu::WSI_ONLY,
+    parameter rv_iommu::igs_t       IGS         = rv_iommu::BOTH,
     // Number of interrupt vectors supported
-    parameter int unsigned      N_INT_VEC       = 16,
+    parameter int unsigned      N_INT_VEC       = ariane_soc::IOMMUNumWires,
     // Number of Performance monitoring event counters (set to zero to disable HPM)
-    parameter int unsigned      N_IOHPMCTR      = 0,     // max 31
+    parameter int unsigned      N_IOHPMCTR      = 16,     // max 31
 
     /// AXI Bus Addr width.
-    parameter int   ADDR_WIDTH      = -1,
+    parameter int   ADDR_WIDTH      = 64,
     /// AXI Bus data width.
-    parameter int   DATA_WIDTH      = -1,
+    parameter int   DATA_WIDTH      = 64,
     /// AXI ID width
-    parameter int   ID_WIDTH        = -1,
+    parameter int   ID_WIDTH        = ariane_soc::IdWidth	,
     /// AXI ID width
-    parameter int   ID_SLV_WIDTH    = -1,
+    parameter int   ID_SLV_WIDTH    = ariane_soc::IdWidthSlave,
     /// AXI user width
     parameter int   USER_WIDTH      = 1,
     /// AXI AW Channel struct type
-    parameter type aw_chan_t        = logic,
+    parameter type aw_chan_t        = ariane_axi_soc::aw_chan_t,
     /// AXI W Channel struct type
-    parameter type w_chan_t         = logic,
+    parameter type w_chan_t         = ariane_axi_soc::w_chan_t,
     /// AXI B Channel struct type
-    parameter type b_chan_t         = logic,
+    parameter type b_chan_t         = ariane_axi_soc::b_chan_t,
     /// AXI AR Channel struct type
-    parameter type ar_chan_t        = logic,
+    parameter type ar_chan_t        = ariane_axi_soc::ar_chan_t,
     /// AXI R Channel struct type
-    parameter type r_chan_t         = logic,
+    parameter type r_chan_t         = ariane_axi_soc::r_chan_t,
     /// AXI Full request struct type
-    parameter type  axi_req_t       = logic,
+    parameter type  axi_req_t       = ariane_axi_soc::req_t,
     /// AXI Full response struct type
-    parameter type  axi_rsp_t       = logic,
+    parameter type  axi_rsp_t       = ariane_axi_soc::resp_t,
     /// AXI Full Slave request struct type
-    parameter type  axi_req_slv_t   = logic,
+    parameter type  axi_req_slv_t   = ariane_axi_soc::req_slv_t,
     /// AXI Full Slave response struct type
-    parameter type  axi_rsp_slv_t   = logic,
+    parameter type  axi_rsp_slv_t   = ariane_axi_soc::resp_slv_t,
     /// AXI Full request struct type w/ DVM extension for SMMU
-    parameter type  axi_req_iommu_t = logic,
+    parameter type  axi_req_iommu_t = ariane_axi_soc::req_iommu_t,
     /// Regbus request struct type.
-    parameter type  reg_req_t       = logic,
+    parameter type  reg_req_t       = iommu_reg_req_t,
     /// Regbus response struct type.
-    parameter type  reg_rsp_t       = logic
+    parameter type  reg_rsp_t       = iommu_reg_rsp_t
 ) (
     input  logic clk_i,
     input  logic rst_ni,
@@ -286,9 +286,9 @@ module riscv_iommu #(
     // Priority is given to normal translations
     // If a debug translation is ongoing and a normal translation is triggered, we wait for the debug translation to complete.
     generate
-        
+
     /*
-        DBG IF support is included. When tr_req_ctl.go is set by SW and no normal request is being processed, 
+        DBG IF support is included. When tr_req_ctl.go is set by SW and no normal request is being processed,
         transaction parameters are taken from the DBG IF registers. Otherwise, transaction parameters are taken from AXI bus
         A single bit register is set when a DBG translation is started, and cleared when finished
     */
@@ -318,7 +318,7 @@ module riscv_iommu #(
 
                 // Indicate that a debug translation is ongoing
                 dbg_ongoing_n = 1'b1;
-                
+
                 // Set translation parameters from DBG IF registers
                 iova    = {dbg_if_iova.vpn.q, 12'b0};
                 did     = dbg_if_ctl.did.q;
@@ -336,7 +336,7 @@ module riscv_iommu #(
 
                 // Debug request finished
                 if (trans_valid | trans_error) begin
-                    
+
                     // Update response register
                     dbg_if_resp.fault.de    = 1'b1;
                     dbg_if_resp.s.de        = 1'b1;
@@ -352,7 +352,7 @@ module riscv_iommu #(
 
             // Normal translation request
             else begin
-                
+
                 iova    = trans_iova;
                 did     = trans_did;
                 pv      = trans_pv;
@@ -370,15 +370,15 @@ module riscv_iommu #(
             else begin
                 dbg_ongoing_q   <= dbg_ongoing_n;
             end
-            
+
         end
     end : gen_dbg_if
-        
+
     /*
         DBG IF support is not included. Transaction parameters are taken from the TR IF
     */
     else begin : gen_dbg_if_disabled
-        
+
         assign iova                     = trans_iova;
         assign did                      = trans_did;
         assign pv                       = trans_pv;
@@ -401,7 +401,7 @@ module riscv_iommu #(
 
         assign dbg_ongoing_q            = 1'b0;
         assign dbg_ongoing_n            = 1'b0;
-        
+
     end : gen_dbg_if_disabled
     endgenerate
 
@@ -445,7 +445,7 @@ module riscv_iommu #(
         // To IOMMU ext port
         .ds_resp_i              (ds_resp_i),
         .ds_req_o               (ds_req_o),
-        
+
         // From Translation logic wrapper
         // PTW
         .ptw_resp_o             (ptw_axi_resp),
@@ -502,7 +502,7 @@ module riscv_iommu #(
         .iova_i         (iova       ),  // AxADDR / DBG IF
         .gscid_o        (gscid      ),  // GSCID
         .pscid_o        (pscid      ),  // PSCID
-        
+
         .trans_type_i   (ttype      ),  // Transaction type
         .priv_lvl_i     (priv       ),  // Priviledge level (S/U)
 
@@ -556,7 +556,7 @@ module riscv_iommu #(
         .flush_pid_i        (flush_pid      ),  // process_id to be flushed if PV = 1
         // IOTLB Invalidation
         .flush_vma_i        (flush_vma      ),  // Flush first-stage PTEs cached entries in IOTLB
-        .flush_gvma_i       (flush_gvma     ),  // Flush second-stage PTEs cached entries in IOTLB 
+        .flush_gvma_i       (flush_gvma     ),  // Flush second-stage PTEs cached entries in IOTLB
         .flush_av_i         (flush_av       ),  // Address valid
         .flush_gv_i         (flush_gv       ),  // GSCID valid
         .flush_pscv_i       (flush_pscv     ),  // PSCID valid
@@ -585,7 +585,7 @@ module riscv_iommu #(
     ) i_rv_iommu_sw_if_wrapper (
         .clk_i              (clk_i),
         .rst_ni             (rst_ni),
-        
+
         // From Prog IF
         .regmap_req_i       (regmap_req),
         .regmap_resp_o      (regmap_resp),
@@ -623,7 +623,7 @@ module riscv_iommu #(
         .flush_pid_o        (flush_pid),    // process_id to be flushed if PV = 1
         // IOTLB Invalidation
         .flush_vma_o        (flush_vma),    // Flush first-stage PTEs cached entries in IOTLB
-        .flush_gvma_o       (flush_gvma),   // Flush second-stage PTEs cached entries in IOTLB 
+        .flush_gvma_o       (flush_gvma),   // Flush second-stage PTEs cached entries in IOTLB
         .flush_av_o         (flush_av),     // Address valid
         .flush_gv_o         (flush_gv),     // GSCID valid
         .flush_pscv_o       (flush_pscv),   // PSCID valid
@@ -642,7 +642,7 @@ module riscv_iommu #(
         .is_supervisor_i    (priv),             // indicate if transaction has supervisor privilege (only if pid valid)
         .is_guest_pf_i      (is_guest_pf),      // indicate if event is a guest page fault
         .is_implicit_i      (is_implicit),      // Guest page fault caused by implicit access for 1st-stage addr translation
-        
+
         // Error signals
         .report_fault_i     (report_fault),     // To signal a translation fault/event
         .cause_code_i       (cause_code),       // Fault code defined by translation logic
@@ -817,7 +817,7 @@ module riscv_iommu #(
   //# Transaction control
     // Monitor incoming request and select parameters according to the source channel
     always_comb begin : transaction_control_comb
-        
+
         // Default values
         request_type_n  = request_type_q;
 
@@ -839,7 +839,7 @@ module riscv_iommu #(
 
         case (request_type_q)
             IDLE: begin
-                
+
                 // AR request received (this way we are giving priority to read transactions)
                 if (dev_tr_req_i.ar_valid & ~dbg_ongoing_q) begin
                     request_type_n  = READ;
@@ -852,7 +852,7 @@ module riscv_iommu #(
             end
 
             READ: begin
-                
+
                 // Tags
                 trans_iova      =  dev_tr_req_i.ar.addr;
                 // AXI DVM extension for SMMU
@@ -866,20 +866,20 @@ module riscv_iommu #(
                 burst_type      =  dev_tr_req_i.ar.burst;
                 burst_length    =  dev_tr_req_i.ar.len;
                 n_bytes         =  dev_tr_req_i.ar.size;
-                    
+
                 // Successful translation. Connect AXI demux to Comp IF
                 if (trans_valid) begin
                     resume_ar_n         = 1'b1;
                     demux_ar_select_n   = 2'b01;
                 end
 
-                // Translation / boundary error. Connect AXI demux to err slave 
+                // Translation / boundary error. Connect AXI demux to err slave
                 else if ((trans_error & !is_fq_fifo_full) || bound_violation) begin
                     resume_ar_n         = 1'b1;
                     demux_ar_select_n   = 2'b00;
                 end
 
-                // MRIF transaction Connect AXI demux to ignore slave 
+                // MRIF transaction Connect AXI demux to ignore slave
                 else if (ignore_request) begin
                     resume_ar_n         = 1'b1;
                     demux_ar_select_n   = 2'b10;
@@ -893,7 +893,7 @@ module riscv_iommu #(
             end
 
             WRITE: begin
-                
+
                 // Tags
                 trans_iova      =  dev_tr_req_i.aw.addr;
                 // AXI DVM extension for SMMU
@@ -906,20 +906,20 @@ module riscv_iommu #(
                 burst_type      =  dev_tr_req_i.aw.burst;
                 burst_length    =  dev_tr_req_i.aw.len;
                 n_bytes         =  dev_tr_req_i.aw.size;
-                    
+
                 // Successful translation. Connect AXI demux to Comp IF
                 if (trans_valid) begin
                     resume_aw_n         = 1'b1;
                     demux_aw_select_n   = 2'b01;
                 end
 
-                // Translation / boundary error. Connect AXI demux to err slave 
+                // Translation / boundary error. Connect AXI demux to err slave
                 else if ((trans_error & !is_fq_fifo_full) || bound_violation) begin
                     resume_aw_n         = 1'b1;
                     demux_aw_select_n   = 2'b00;
                 end
 
-                // MRIF transaction Connect AXI demux to ignore slave 
+                // MRIF transaction Connect AXI demux to ignore slave
                 else if (ignore_request) begin
                     resume_aw_n         = 1'b1;
                     demux_aw_select_n   = 2'b10;
@@ -975,7 +975,7 @@ module riscv_iommu #(
 
     `endif
     //pragma translate_on
-    
+
 endmodule
 
 /* verilator lint_off WIDTH */
