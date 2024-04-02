@@ -1,13 +1,13 @@
 // Copyright © 2023 Manuel Rodríguez & Zero-Day Labs, Lda.
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); 
-// you may not use this file except in compliance with the License, 
-// or, at your option, the Apache License version 2.0. 
+// Licensed under the Solderpad Hardware License v 2.1 (the “License”);
+// you may not use this file except in compliance with the License,
+// or, at your option, the Apache License version 2.0.
 // You may obtain a copy of the License at https://solderpad.org/licenses/SHL-2.1/.
-// Unless required by applicable law or agreed to in writing, 
-// any work distributed under the License is distributed on an “AS IS” BASIS, 
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
+// Unless required by applicable law or agreed to in writing,
+// any work distributed under the License is distributed on an “AS IS” BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and limitations under the License.
 //
 // Author: Manuel Rodríguez <manuel.cederog@gmail.com>
@@ -321,7 +321,7 @@ module rv_iommu_regmap #(
   logic         tr_response_s_qs;
   logic [21:0]  tr_response_ppn_h_qs;
   logic [21:0]  tr_response_ppn_l_qs;
-  
+
   // ipsr
   logic 		ipsr_cip_qs;
   logic 		ipsr_cip_wd;
@@ -448,7 +448,7 @@ module rv_iommu_regmap #(
       assign capabilities_msi_mrif_qs = 1'h0;
     end : gen_mrif_support_disabled
   endgenerate
-  
+
   //   F[amo_hwad]: 24:24
   assign reg2hw.capabilities.amo_hwad.q = 1'h0;
   assign capabilities_amo_hwad_qs = 1'h0;
@@ -1890,7 +1890,7 @@ module rv_iommu_regmap #(
   end
 
   else begin
-    
+
     assign iocountinh_cy_qs       = '0;
     assign iocountinh_hpm_qs      = '0;
 
@@ -1936,12 +1936,12 @@ module rv_iommu_regmap #(
 
   // Debug Register Interface
   generate
-    
+
     // Include Debug Register Interface
-    if (InclDBG) begin : gen_dbg_if
+    if (InclDBG) begin : gen_dbg_if_1
 
       // R[tr_req_iova]: V(False)
-      
+
       //   F[vpn_low]
       rv_iommu_field #(
         .DATA_WIDTH      (20),
@@ -1995,7 +1995,7 @@ module rv_iommu_regmap #(
       );
 
       // R[tr_req_ctl]: V(False)
-      
+
       //   F[go/busy]
       rv_iommu_field #(
         .DATA_WIDTH      (1),
@@ -2076,7 +2076,7 @@ module rv_iommu_regmap #(
 
       // Only generate PID field if PID is supported
       if (InclPC) begin : gen_pc_support
-        
+
         //   F[pid]
         rv_iommu_field #(
           .DATA_WIDTH      (20),
@@ -2129,14 +2129,14 @@ module rv_iommu_regmap #(
           .qs     (tr_req_ctl_pv_qs)
         );
       end : gen_pc_support
-      
+
       else begin : gen_pc_support_disabled
 
         assign reg2hw.tr_req_ctl.pid.q  = '0;
         assign tr_req_ctl_pid_qs        = '0;
         assign reg2hw.tr_req_ctl.pv.q   = 1'b0;
         assign tr_req_ctl_pv_qs         = 1'b0;
-        
+
       end : gen_pc_support_disabled
 
       //   F[did]
@@ -2297,9 +2297,9 @@ module rv_iommu_regmap #(
         .qs     (tr_response_ppn_h_qs)
       );
 
-    end : gen_dbg_if
-    
-    else begin : gen_dbg_if_disabled
+    end : gen_dbg_if_1
+
+    else begin : gen_dbg_if_disabled_1
 
       assign reg2hw.tr_req_iova.vpn.q   = '0;
       assign tr_req_iova_vpn_h_qs       = '0;
@@ -2326,14 +2326,14 @@ module rv_iommu_regmap #(
       assign tr_response_ppn_h_qs       = '0;
       assign tr_response_ppn_l_qs       = '0;
 
-    end : gen_dbg_if_disabled
+    end : gen_dbg_if_disabled_1
   endgenerate
 
   // R[icvec]: V(False)
 
   generate
   if (LOG2_INTVEC > 0) begin : gen_icvec
-    
+
     //   F[civ]
     rv_iommu_field #(
       .DATA_WIDTH      (LOG2_INTVEC),
@@ -2437,12 +2437,12 @@ module rv_iommu_regmap #(
 
   assign icvec_piv_qs = '0;
   assign reg2hw.icvec.piv.q = '0;
-  
+
   // Generate MSI Configuration Table if IOMMU includes MSI gen support
   if ((IGS == rv_iommu::MSI_ONLY) || (IGS == rv_iommu::BOTH)) begin : gen_msi_cfg_tbl
 
     for (genvar i = 0; i < N_INT_VEC; i++) begin
-      
+
       // R[msi_addr_x]: V(False)
 
       //   F[addr_low]: 31:2
@@ -2556,19 +2556,19 @@ module rv_iommu_regmap #(
     end
   end
 
-  // Hardwire unimplemented vectors to zero 
+  // Hardwire unimplemented vectors to zero
   for (genvar i = N_INT_VEC; i < 16; i++) begin
 
     assign msi_addr_l_qs[i]   = '0;
     assign msi_addr_h_qs[i]   = '0;
     assign msi_data_qs[i]     = '0;
     assign msi_vec_ctl_qs[i]  = 1'b0;
-    
+
     assign reg2hw.msi_addr[i].addr.q  = '0;
     assign reg2hw.msi_data[i].data.q  = '0;
     assign reg2hw.msi_vec_ctl[i].m.q  = 1'b0;
   end
-  
+
 
   //-------------------
   //# Address hit logic
@@ -2656,25 +2656,25 @@ module rv_iommu_regmap #(
 
   // Debug Register IF
   generate
-  if (InclDBG) begin : gen_dbg_if
-    
+  if (InclDBG) begin : gen_dbg_if_2
+
     assign addr_hit[144] = (reg_addr == IOMMU_TR_REQ_IOVA_OFFSET_L);
     assign addr_hit[145] = (reg_addr == IOMMU_TR_REQ_IOVA_OFFSET_H);
     assign addr_hit[146] = (reg_addr == IOMMU_TR_REQ_CTL_OFFSET_L);
     assign addr_hit[147] = (reg_addr == IOMMU_TR_REQ_CTL_OFFSET_H);
     assign addr_hit[148] = (reg_addr == IOMMU_TR_RESPONSE_OFFSET_L);
     assign addr_hit[149] = (reg_addr == IOMMU_TR_RESPONSE_OFFSET_H);
-  end : gen_dbg_if
-  
-  else begin : gen_dbg_if_disabled
-    
+  end : gen_dbg_if_2
+
+  else begin : gen_dbg_if_disabled_2
+
     assign addr_hit[144] = 1'b0;
     assign addr_hit[145] = 1'b0;
     assign addr_hit[146] = 1'b0;
     assign addr_hit[147] = 1'b0;
     assign addr_hit[148] = 1'b0;
     assign addr_hit[149] = 1'b0;
-  end : gen_dbg_if_disabled
+  end : gen_dbg_if_disabled_2
   endgenerate
 
   assign addr_hit[150] = (reg_addr == IOMMU_ICVEC_OFFSET_L);
@@ -2722,34 +2722,34 @@ module rv_iommu_regmap #(
 
   // Debug register IF
   generate
-  if (InclDBG) begin : gen_dbg_if
-    
+  if (InclDBG) begin : gen_dbg_if_3
+
     assign wr_err[144] = (addr_hit[144] & (|(IOMMU_PERMIT[24] & ~reg_be)));
     assign wr_err[145] = (addr_hit[145] & (|(IOMMU_PERMIT[25] & ~reg_be)));
     assign wr_err[146] = (addr_hit[146] & (|(IOMMU_PERMIT[26] & ~reg_be)));
     assign wr_err[147] = (addr_hit[147] & (|(IOMMU_PERMIT[27] & ~reg_be)));
     assign wr_err[148] = (addr_hit[148] & (|(IOMMU_PERMIT[28] & ~reg_be)));
     assign wr_err[149] = (addr_hit[149] & (|(IOMMU_PERMIT[29] & ~reg_be)));
-  end : gen_dbg_if
-  
-  else begin : gen_dbg_if_disabled
-    
+  end : gen_dbg_if_3
+
+  else begin : gen_dbg_if_disabled_3
+
     assign wr_err[144] = 1'b0;
     assign wr_err[145] = 1'b0;
     assign wr_err[146] = 1'b0;
     assign wr_err[147] = 1'b0;
     assign wr_err[148] = 1'b0;
     assign wr_err[149] = 1'b0;
-  end : gen_dbg_if_disabled
+  end : gen_dbg_if_disabled_3
   endgenerate
-  
+
 
   assign wr_err[150] = (addr_hit[150] & (|(IOMMU_PERMIT[30] & ~reg_be)));
   assign wr_err[151] = (addr_hit[151] & (|(IOMMU_PERMIT[31] & ~reg_be)));
 
   // MSI Config Table
   for (genvar i = 0; i < N_INT_VEC; i++) begin
-    
+
     assign wr_err[152+i] = (addr_hit[152+i] & (|(IOMMU_PERMIT[32] & ~reg_be)));
     assign wr_err[168+i] = (addr_hit[168+i] & (|(IOMMU_PERMIT[33] & ~reg_be)));
     assign wr_err[184+i] = (addr_hit[184+i] & (|(IOMMU_PERMIT[34] & ~reg_be)));
@@ -2758,7 +2758,7 @@ module rv_iommu_regmap #(
 
   // Hardwire unused bits to zero
   for (genvar i = N_INT_VEC; i < 16; i++) begin
-    
+
     assign wr_err[152+i] = 1'b0;
     assign wr_err[168+i] = 1'b0;
     assign wr_err[184+i] = 1'b0;
@@ -2775,8 +2775,8 @@ module rv_iommu_regmap #(
 
   // fctl
   // Interrupts can not be generated as MSI (0) if caps.IGS != {0,2}, and can not be generated as WSI (1) if caps.IGS != {1,2}
-  assign fctl_wsi_we = (addr_hit[2] & reg_we & !reg_error) & 
-    (((reg_wdata[1] == 1'b0) & (reg2hw.capabilities.igs.q inside {2'b00, 2'b10})) | 
+  assign fctl_wsi_we = (addr_hit[2] & reg_we & !reg_error) &
+    (((reg_wdata[1] == 1'b0) & (reg2hw.capabilities.igs.q inside {2'b00, 2'b10})) |
      ((reg_wdata[1] == 1'b1) & (reg2hw.capabilities.igs.q inside {2'b01, 2'b10})));
   assign fctl_wsi_wd = reg_wdata[1];
 
@@ -2875,7 +2875,7 @@ module rv_iommu_regmap #(
   // HPM
   generate
   if (N_IOHPMCTR > 0) begin
-    
+
     // iocntinh
     assign iocountinh_cy_we = addr_hit[17] & reg_we & !reg_error;
     assign iocountinh_cy_wd = reg_wdata[0];
@@ -2895,7 +2895,7 @@ module rv_iommu_regmap #(
     assign iohpmcycles_of_wd = reg_wdata[31];
 
     for (genvar i = 0; i < N_IOHPMCTR; i++) begin
-      
+
       // iohpmctr_n (low)
       assign iohpmctr_counter_l_we[i]   = addr_hit[20+i] & reg_we & !reg_error;
       assign iohpmctr_counter_l_wd[i]   = reg_wdata[31:0];
@@ -2930,7 +2930,7 @@ module rv_iommu_regmap #(
 
   // No HPM
   else begin
-    
+
     assign iocountinh_cy_we = 1'b0;
     assign iocountinh_cy_wd = '0;
     assign iocountinh_hpm_we = 1'b0;
@@ -2977,8 +2977,8 @@ module rv_iommu_regmap #(
   // Debug Register IF
   generate
 
-    if (InclDBG) begin : gen_dbg_if
-      
+    if (InclDBG) begin : gen_dbg_if_4
+
       assign tr_req_iova_vpn_l_we = addr_hit[144] & reg_we & !reg_error;
       assign tr_req_iova_vpn_l_wd = reg_wdata[31:12];
 
@@ -2998,7 +2998,7 @@ module rv_iommu_regmap #(
       assign tr_req_ctl_nw_wd = reg_wdata[3];
 
       if (InclPC) begin : gen_pc_support
-        
+
         assign tr_req_ctl_pid_we = addr_hit[146] & reg_we & !reg_error;
         assign tr_req_ctl_pid_wd = reg_wdata[31:12];
 
@@ -3006,9 +3006,9 @@ module rv_iommu_regmap #(
         assign tr_req_ctl_pv_wd = reg_wdata[0];
 
       end : gen_pc_support
-      
+
       else begin : gen_pc_support_disabled
-        
+
         assign tr_req_ctl_pid_we = 1'b0;
         assign tr_req_ctl_pid_wd = '0;
 
@@ -3018,9 +3018,9 @@ module rv_iommu_regmap #(
 
       assign tr_req_ctl_did_we = addr_hit[147] & reg_we & !reg_error;
       assign tr_req_ctl_did_wd = reg_wdata[31:8];
-    end : gen_dbg_if
-    
-    else begin : gen_dbg_if_disabled
+    end : gen_dbg_if_4
+
+    else begin : gen_dbg_if_disabled_4
 
       assign tr_req_iova_vpn_l_we = 1'b0;
       assign tr_req_iova_vpn_l_wd = '0;
@@ -3039,9 +3039,9 @@ module rv_iommu_regmap #(
       assign tr_req_ctl_pv_we = 1'b0;
       assign tr_req_ctl_pv_wd = '0;
       assign tr_req_ctl_did_we = 1'b0;
-      assign tr_req_ctl_did_wd = '0;  
-    end : gen_dbg_if_disabled
-    
+      assign tr_req_ctl_did_wd = '0;
+    end : gen_dbg_if_disabled_4
+
   endgenerate
 
   // icvec
@@ -3060,7 +3060,7 @@ module rv_iommu_regmap #(
   // MSI Config Table
   generate
   for (genvar i = 0; i < N_INT_VEC; i++) begin
-    
+
     // msi_addr_x (low)
     assign msi_addr_l_we[i] = addr_hit[152+i] & reg_we & !reg_error;
     assign msi_addr_l_wd[i] = reg_wdata[31:2];
@@ -3081,7 +3081,7 @@ module rv_iommu_regmap #(
 
   // Hardwire unused bits to zero
   for (genvar i = N_INT_VEC; i < 0; i++) begin
-    
+
     assign msi_addr_l_we[i] = 1'b0;
     assign msi_addr_l_wd[i] = '0;
 
@@ -3098,7 +3098,7 @@ module rv_iommu_regmap #(
   //------------------
   // # Read data logic
   //------------------
-  
+
   logic   iohpmctr_l_hit_vector, iohpmctr_h_hit_vector;
   logic   iohpmevt_l_hit_vector, iohpmevt_h_hit_vector;
   assign  iohpmctr_l_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(20+N_IOHPMCTR-1):20])   : ('0);
@@ -3269,7 +3269,7 @@ module rv_iommu_regmap #(
         for (int unsigned i = 1; i < (N_IOHPMCTR + 1); i++) begin
           reg_rdata_next[i] = iohpmevt_of_qs[i-1];
         end
-        if (N_IOHPMCTR != 31) 
+        if (N_IOHPMCTR != 31)
           reg_rdata_next[31:N_IOHPMCTR+1] = '0;
       end
 
@@ -3279,7 +3279,7 @@ module rv_iommu_regmap #(
         for (int unsigned i = 1; i < (N_IOHPMCTR + 1); i++) begin
           reg_rdata_next[i] = iocountinh_hpm_qs[i-1];
         end
-        if (N_IOHPMCTR != 31) 
+        if (N_IOHPMCTR != 31)
           reg_rdata_next[31:N_IOHPMCTR+1] = '0;
       end
 
@@ -3320,7 +3320,7 @@ module rv_iommu_regmap #(
             reg_rdata_next[14:0]  = iohpmevt_eventid_qs[i];
             reg_rdata_next[15]    = iohpmevt_dmask_qs[i];
             reg_rdata_next[31:16] = iohpmevt_pid_pscid_l_qs[i];
-          end 
+          end
         end
       end
 
@@ -3335,7 +3335,7 @@ module rv_iommu_regmap #(
             reg_rdata_next[29]    = iohpmevt_dv_gscv_qs[i];
             reg_rdata_next[30]    = iohpmevt_idt_qs[i];
             reg_rdata_next[31]    = iohpmevt_of_qs[i];
-          end 
+          end
         end
       end
 
