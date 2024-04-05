@@ -25,4 +25,4 @@ bind riscv_iommu iommu_sva #(
                                 .reg_req_t(reg_req_t),
                                 .reg_rsp_t(reg_rsp_t)
                                 )
-                                iommu_inst(.*);
+                                sva(.*);
