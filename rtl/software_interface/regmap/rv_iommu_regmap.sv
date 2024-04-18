@@ -19,7 +19,6 @@
 //              This module was developed using LowRISC `reggen` tool.
 
 module rv_iommu_regmap #(
-  parameter int 			        ADDR_WIDTH = 32,
   parameter int 			        DATA_WIDTH = 32,
 
   // MSI translation support
