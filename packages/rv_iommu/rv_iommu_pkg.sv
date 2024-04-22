@@ -499,7 +499,7 @@ package rv_iommu;
 
     // Extract Interrupt File number from GPA
     // The resulting IF number is used to index the corresponding MSI PTE in memory.
-    function logic [(riscv::GPPNW-1):0] extract_imsic_num(input logic [(riscv::GPPNW-1):0] gpaddr, input logic [(MSI_MASK_LEN-1):0] mask);
+    function automatic logic [(riscv::GPPNW-1):0] extract_imsic_num(input logic [(riscv::GPPNW-1):0] gpaddr, input logic [(MSI_MASK_LEN-1):0] mask);
         logic [(riscv::GPPNW-1):0] masked_gpaddr, imsic_num;
         int unsigned i;
 
