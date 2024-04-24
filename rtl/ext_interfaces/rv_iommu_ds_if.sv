@@ -107,10 +107,11 @@ module rv_iommu_ds_if #(
     always_comb begin
         w_select = '0;
         unique case (ds_req_o.aw.id)   // Selected AWID
-            4'b0000:                            w_select = 2'd0; // CQ
-            4'b0001:                            w_select = 2'd1; // FQ
-            4'b0010:                            w_select = 2'd2; // MSI IG
-            4'b0011:                            w_select = 2'd3; // MRIF Handler
+            4'b0000:    w_select = 2'd0; // CQ
+            4'b0001:    w_select = 2'd1; // FQ
+            4'b0010:    w_select = 2'd2; // MSI IG
+            4'b0011:    w_select = 2'd3; // MRIF Handler
+            default:    w_select = 2'd0; // CQ
         endcase
     end
 
@@ -199,10 +200,11 @@ module rv_iommu_ds_if #(
     always_comb begin
         b_select = 0;
         unique case (ds_resp_i.b.id)
-            4'b0000:                        b_select = 0;   // CQ
-            4'b0001:                        b_select = 1;   // FQ
-            4'b0010:                        b_select = 2;   // MSI IG
-            4'b0011:                        b_select = 3;   // MRIF Handler
+            4'b0000:    b_select = 0;   // CQ
+            4'b0001:    b_select = 1;   // FQ
+            4'b0010:    b_select = 2;   // MSI IG
+            4'b0011:    b_select = 3;   // MRIF Handler
+            default:    b_select = 0;   // CQ
         endcase
     end
 
