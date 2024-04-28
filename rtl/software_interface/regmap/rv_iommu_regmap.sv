@@ -57,6 +57,9 @@ module rv_iommu_regmap #(
   import rv_iommu_reg_pkg::* ;
   import rv_iommu_field_pkg::* ;
 
+  // Aux parameters to avoid verilator warnings
+  localparam int unsigned NZ_NHPMCTR = (N_IOHPMCTR > 0) ? (N_IOHPMCTR) : (1);
+
   // register signals
   // EXP: Register signals to connect the SW register interface port to the register file.
   logic           			  reg_we;
@@ -631,7 +634,7 @@ module rv_iommu_regmap #(
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.ddtp.busy.q ),
+    .q      (),
 
     // to register interface (read)
     .qs     (ddtp_busy_qs)
@@ -1149,7 +1152,7 @@ module rv_iommu_regmap #(
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.cqcsr.cqon.q ),
+    .q      (),
 
     // to register interface (read)
     .qs     (cqcsr_cqon_qs)
@@ -1175,7 +1178,7 @@ module rv_iommu_regmap #(
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.cqcsr.busy.q ),
+    .q      (),
 
     // to register interface (read)
     .qs     (cqcsr_busy_qs)
@@ -1311,7 +1314,7 @@ module rv_iommu_regmap #(
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.fqcsr.fqon.q ),
+    .q      (),
 
     // to register interface (read)
     .qs     (fqcsr_fqon_qs)
@@ -1337,7 +1340,7 @@ module rv_iommu_regmap #(
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.fqcsr.busy.q ),
+    .q      (),
 
     // to register interface (read)
     .qs     (fqcsr_busy_qs)
@@ -2009,8 +2012,8 @@ module rv_iommu_regmap #(
         .wd     (tr_req_ctl_go_wd),
 
         // from internal hardware
-        .de     (hw2reg.tr_req_ctl.go.de),
-        .d      (hw2reg.tr_req_ctl.go.d),
+        .de     (hw2reg.tr_req_ctl.busy.de),
+        .d      (hw2reg.tr_req_ctl.busy.d),
         .ds     (),
 
         // to internal hardware
@@ -2071,6 +2074,32 @@ module rv_iommu_regmap #(
 
         // to register interface (read)
         .qs     (tr_req_ctl_exe_qs)
+      );
+
+      //   F[nw]
+      rv_iommu_field #(
+        .DATA_WIDTH      (1),
+        .SwAccess(SwAccessRW),
+        .RESVAL  ('0)
+      ) u_tr_req_ctl_nw (
+        .clk_i   (clk_i   ),
+        .rst_ni  (rst_ni  ),
+
+        // from register interface
+        .we     (tr_req_ctl_nw_we),
+        .wd     (tr_req_ctl_nw_wd),
+
+        // from internal hardware
+        .de     ('0),
+        .d      ('0),
+        .ds     (),
+
+        // to internal hardware
+        .qe     (),
+        .q      (reg2hw.tr_req_ctl.nw.q),
+
+        // to register interface (read)
+        .qs     (tr_req_ctl_nw_qs)
       );
 
       // Only generate PID field if PID is supported
@@ -2186,7 +2215,7 @@ module rv_iommu_regmap #(
 
         // to internal hardware
         .qe     (),
-        .q      (reg2hw.tr_response.fault.q),
+        .q      (),
 
         // to register interface (read)
         .qs     (tr_response_fault_qs)
@@ -2212,7 +2241,7 @@ module rv_iommu_regmap #(
 
         // to internal hardware
         .qe     (),
-        .q      (reg2hw.tr_response.pbmt.q),
+        .q      (),
 
         // to register interface (read)
         .qs     (tr_response_pbmt_qs)
@@ -2238,7 +2267,7 @@ module rv_iommu_regmap #(
 
         // to internal hardware
         .qe     (),
-        .q      (reg2hw.tr_response.s.q),
+        .q      (),
 
         // to register interface (read)
         .qs     (tr_response_s_qs)
@@ -2264,7 +2293,7 @@ module rv_iommu_regmap #(
 
         // to internal hardware
         .qe     (),
-        .q      (reg2hw.tr_response.ppn.q[21:0]),
+        .q      (),
 
         // to register interface (read)
         .qs     (tr_response_ppn_l_qs)
@@ -2290,7 +2319,7 @@ module rv_iommu_regmap #(
 
         // to internal hardware
         .qe     (),
-        .q      (reg2hw.tr_response.ppn.q[43:22]),
+        .q      (),
 
         // to register interface (read)
         .qs     (tr_response_ppn_h_qs)
@@ -2303,6 +2332,7 @@ module rv_iommu_regmap #(
       assign reg2hw.tr_req_iova.vpn.q   = '0;
       assign tr_req_iova_vpn_h_qs       = '0;
       assign tr_req_iova_vpn_l_qs       = '0;
+
       assign reg2hw.tr_req_ctl.go.q     = 1'b0;
       assign tr_req_ctl_go_qs           = 1'b0;
       assign reg2hw.tr_req_ctl.priv.q   = 1'b0;
@@ -2315,13 +2345,10 @@ module rv_iommu_regmap #(
       assign tr_req_ctl_pv_qs           = 1'b0;
       assign reg2hw.tr_req_ctl.did.q    = '0;
       assign tr_req_ctl_did_qs          = '0;
-      assign reg2hw.tr_response.fault.q = 1'b0;
+
       assign tr_response_fault_qs       = 1'b0;
-      assign reg2hw.tr_response.pbmt.q  = '0;
       assign tr_response_pbmt_qs        = '0;
-      assign reg2hw.tr_response.s.q     = 1'b0;
       assign tr_response_s_qs           = 1'b0;
-      assign reg2hw.tr_response.ppn.q   = '0;
       assign tr_response_ppn_h_qs       = '0;
       assign tr_response_ppn_l_qs       = '0;
 
@@ -2433,9 +2460,6 @@ module rv_iommu_regmap #(
     assign reg2hw.icvec.pmiv.q = '0;
   end
   endgenerate
-
-  assign icvec_piv_qs = '0;
-  assign reg2hw.icvec.piv.q = '0;
   
   // Generate MSI Configuration Table if IOMMU includes MSI gen support
   if ((IGS == rv_iommu::MSI_ONLY) || (IGS == rv_iommu::BOTH)) begin : gen_msi_cfg_tbl
@@ -3100,10 +3124,10 @@ module rv_iommu_regmap #(
   
   logic   iohpmctr_l_hit_vector, iohpmctr_h_hit_vector;
   logic   iohpmevt_l_hit_vector, iohpmevt_h_hit_vector;
-  assign  iohpmctr_l_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(20+N_IOHPMCTR-1):20])   : ('0);
-  assign  iohpmctr_h_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(51+N_IOHPMCTR-1):51])   : ('0);
-  assign  iohpmevt_l_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(82+N_IOHPMCTR-1):82])   : ('0);
-  assign  iohpmevt_h_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(113+N_IOHPMCTR-1):113]) : ('0);
+  assign  iohpmctr_l_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(20+NZ_NHPMCTR-1):20])   : ('0);
+  assign  iohpmctr_h_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(51+NZ_NHPMCTR-1):51])   : ('0);
+  assign  iohpmevt_l_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(82+NZ_NHPMCTR-1):82])   : ('0);
+  assign  iohpmevt_h_hit_vector = (N_IOHPMCTR > 0) ? (|addr_hit[(113+NZ_NHPMCTR-1):113]) : ('0);
 
   logic msi_addr_l_hit_vector;
   logic msi_addr_h_hit_vector;
@@ -3265,21 +3289,17 @@ module rv_iommu_regmap #(
       // iocountovf
       addr_hit[16]: begin
         reg_rdata_next[0] = iohpmcycles_of_qs;
-        for (int unsigned i = 1; i < (N_IOHPMCTR + 1); i++) begin
-          reg_rdata_next[i] = iohpmevt_of_qs[i-1];
+        for (int unsigned i = 0; i < 31; i++) begin
+          reg_rdata_next[i+1] = iohpmevt_of_qs[i];
         end
-        if (N_IOHPMCTR != 31) 
-          reg_rdata_next[31:N_IOHPMCTR+1] = '0;
       end
 
       // iocountinh
       addr_hit[17]: begin
         reg_rdata_next[0] = iocountinh_cy_qs;
-        for (int unsigned i = 1; i < (N_IOHPMCTR + 1); i++) begin
-          reg_rdata_next[i] = iocountinh_hpm_qs[i-1];
+        for (int unsigned i = 0; i < 31; i++) begin
+          reg_rdata_next[i+1] = iocountinh_hpm_qs[i];
         end
-        if (N_IOHPMCTR != 31) 
-          reg_rdata_next[31:N_IOHPMCTR+1] = '0;
       end
 
       // iohpmcycles (low)
@@ -3296,7 +3316,7 @@ module rv_iommu_regmap #(
       // iohpmctr_n (low)
       (iohpmctr_l_hit_vector): begin
 
-        for (int unsigned i = 0; i < N_IOHPMCTR; i++) begin
+        for (int unsigned i = 0; i < NZ_NHPMCTR; i++) begin
           if (addr_hit[i+20])
             reg_rdata_next[31:0] = iohpmctr_counter_l_qs[i];
         end
@@ -3305,7 +3325,7 @@ module rv_iommu_regmap #(
       // iohpmctr_n (high)
       (iohpmctr_h_hit_vector): begin
 
-        for (int unsigned i = 0; i < N_IOHPMCTR; i++) begin
+        for (int unsigned i = 0; i < NZ_NHPMCTR; i++) begin
           if (addr_hit[i+51])
             reg_rdata_next[31:0] = iohpmctr_counter_h_qs[i];
         end
@@ -3314,7 +3334,7 @@ module rv_iommu_regmap #(
       // iohpmevt_n (low)
       (iohpmevt_l_hit_vector): begin
 
-        for (int unsigned i = 0; i < N_IOHPMCTR; i++) begin
+        for (int unsigned i = 0; i < NZ_NHPMCTR; i++) begin
           if (addr_hit[i+82]) begin
             reg_rdata_next[14:0]  = iohpmevt_eventid_qs[i];
             reg_rdata_next[15]    = iohpmevt_dmask_qs[i];
@@ -3326,7 +3346,7 @@ module rv_iommu_regmap #(
       // iohpmevt_n (high)
       (iohpmevt_h_hit_vector): begin
 
-        for (int unsigned i = 0; i < N_IOHPMCTR; i++) begin
+        for (int unsigned i = 0; i < NZ_NHPMCTR; i++) begin
           if (addr_hit[i+113]) begin
             reg_rdata_next[3:0]   = iohpmevt_pid_pscid_h_qs[i];
             reg_rdata_next[27:4]  = iohpmevt_did_gscid_qs[i];

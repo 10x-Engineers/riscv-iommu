@@ -18,8 +18,6 @@
 //              Parameterized MSI translation support. Does NOT support PCs
 //              This module walks memory to locate DCs and updates the corresponding cache.
 
-//# Disabled verilator_lint_off WIDTH
-
 module rv_iommu_cdw #(
 
     // MSI translation support
@@ -532,13 +530,14 @@ module rv_iommu_cdw #(
                 dc_msi_addr_mask    = rv_iommu::msi_addr_mask_t'(mem_resp_i.r.data);
                 dc_msi_addr_patt    = rv_iommu::msi_addr_pattern_t'(mem_resp_i.r.data);
 
-                up_dc_content.tc               = dc_tc_q;
-                up_dc_content.iohgatp          = dc_iohgatp_q;
-                up_dc_content.ta               = dc_ta_q;
-                up_dc_content.fsc              = dc_fsc_q;
-                up_dc_content.msi_addr_pattern = dc_msi_addr_patt_q;
-                up_dc_content.msi_addr_mask    = dc_msi_addr_mask_q;
-                up_dc_content.msiptp           = dc_msiptp_q;
+                up_dc_content.tc                = dc_tc_q;
+                up_dc_content.iohgatp           = dc_iohgatp_q;
+                up_dc_content.ta                = dc_ta_q;
+                up_dc_content.fsc               = dc_fsc_q;
+                up_dc_content.msi_addr_pattern  = dc_msi_addr_patt_q;
+                up_dc_content.msi_addr_mask     = dc_msi_addr_mask_q;
+                up_dc_content.msiptp            = dc_msiptp_q;
+                up_dc_content.reserved          = '0;
 
                 // Outputs
                 up_dc_content_o = up_dc_content;
@@ -654,4 +653,3 @@ module rv_iommu_cdw #(
     end
 
 endmodule
-//# Disabled verilator_lint_on WIDTH

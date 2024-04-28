@@ -16,8 +16,6 @@
 //
 // Description: RISC-V IOMMU Top Module.
 
-/* verilator lint_off WIDTH */
-
 module riscv_iommu #(
     // Number of IOTLB entries
     parameter int unsigned  IOTLB_ENTRIES       = 4,
@@ -308,8 +306,8 @@ module riscv_iommu #(
             dbg_if_resp.ppn.de      = 1'b0;
 
             // To indicate completion
-            dbg_if_ctl_busy.go.d    = 1'b0;
-            dbg_if_ctl_busy.go.de   = 1'b0;
+            dbg_if_ctl_busy.busy.d  = 1'b0;
+            dbg_if_ctl_busy.busy.de = 1'b0;
 
             dbg_ongoing_n           = dbg_ongoing_q;
 
@@ -343,7 +341,7 @@ module riscv_iommu #(
                     dbg_if_resp.ppn.de      = 1'b1;
 
                     // Clear busy register to indicate completion
-                    dbg_if_ctl_busy.go.de   = 1'b1;
+                    dbg_if_ctl_busy.busy.de = 1'b1;
 
                     // Clear control flag
                     dbg_ongoing_n           = 1'b0;
@@ -396,8 +394,8 @@ module riscv_iommu #(
         assign dbg_if_resp.s.de         = 1'b0;
         assign dbg_if_resp.ppn.de       = 1'b0;
 
-        assign dbg_if_ctl_busy.go.d     = 1'b0;
-        assign dbg_if_ctl_busy.go.de    = 1'b0;
+        assign dbg_if_ctl_busy.busy.d   = 1'b0;
+        assign dbg_if_ctl_busy.busy.de  = 1'b0;
 
         assign dbg_ongoing_q            = 1'b0;
         assign dbg_ongoing_n            = 1'b0;
@@ -941,8 +939,8 @@ module riscv_iommu #(
         if (~rst_ni) begin
             resume_aw_q         <= 1'b0;
             resume_ar_q         <= 1'b0;
-            demux_aw_select_q   <= 1'b0;
-            demux_ar_select_q   <= 1'b0;
+            demux_aw_select_q   <= '0;
+            demux_ar_select_q   <= '0;
             request_type_q      <= IDLE;
         end
 
@@ -977,5 +975,3 @@ module riscv_iommu #(
     //pragma translate_on
     
 endmodule
-
-/* verilator lint_off WIDTH */

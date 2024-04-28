@@ -18,8 +18,6 @@
 //              This module fetches, decodes and executes commands
 //              issued by software into the CQ
 
-/* verilator lint_off WIDTH */
-
 module rv_iommu_cq_handler #(
     /// AXI Full request struct type
     parameter type  axi_req_t       = logic,
@@ -243,7 +241,7 @@ module rv_iommu_cq_handler #(
                     else if (cq_tail_i != masked_head) begin
 
                         // Set pptr with the paddr of the next entry
-                        cq_pptr_n = {cq_base_ppn_i, 12'b0} | {masked_head, 4'b0};
+                        cq_pptr_n = {cq_base_ppn_i, 12'b0} | ({{riscv::PLEN-32{1'b0}}, masked_head} << 4);
                         state_n = FETCH;
                     end
                 end
@@ -508,5 +506,3 @@ module rv_iommu_cq_handler #(
     end
     
 endmodule
-
-/* verilator lint_on WIDTH */

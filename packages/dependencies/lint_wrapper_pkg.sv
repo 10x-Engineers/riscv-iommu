@@ -119,7 +119,7 @@ package lint_wrapper;
 
     // AR Channel
     typedef struct packed {
-        id_t             id;
+        id_t              id;
         addr_t            addr;
         axi_pkg::len_t    len;
         axi_pkg::size_t   size;

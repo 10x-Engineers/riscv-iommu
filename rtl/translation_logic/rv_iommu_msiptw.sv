@@ -72,9 +72,9 @@ module rv_iommu_msiptw #(
     input  riscv::pte_t                 gpte_i,
 
     // MSI PT base PPN
-    input  logic [(riscv::PPNW-1):0]            msiptp_ppn_i,
+    input  logic [(riscv::PPNW-1):0]    msiptp_ppn_i,
     // MSI address mask
-    input  logic [(rv_iommu::MSI_MASK_LEN-1):0] msi_addr_mask_i,
+    input  logic [riscv::GPPNW-1:0]     msi_addr_mask_i,
 
     // Generic update ports
     output logic [(riscv::GPPNW-1):0]   vpn_o,
@@ -232,32 +232,38 @@ module rv_iommu_msiptw #(
                     // Set pptr and propagate first-stage data
                     else begin
                         
-                        /* verilator lint_off WIDTH */
                         // First-stage translation enabled. Tags come from PTW. Propagate first-stage data
                         if (en_1S_i) begin
+                            
+                            automatic logic [riscv::GPPNW-1:0] imsic_num;
+                            imsic_num = rv_iommu::extract_imsic_num(gpte_i.ppn[(riscv::GPPNW-1):0], msi_addr_mask_i);
 
-                            pptr_n          = {msiptp_ppn_i, 12'b0} | 
-                                                (rv_iommu::extract_imsic_num(gpte_i.ppn[(riscv::GPPNW-1):0], msi_addr_mask_i) << 4);
+                            pptr_n      = {msiptp_ppn_i, 12'b0} | 
+                                            ({{riscv::PLEN-riscv::GPPNW{1'b0}}, imsic_num} << 4);
 
                             // First-stage parameters
-                            vpn_n           = vpn_i;        // GVA
-                            is_1S_2M_n      = is_1S_2M_i;
-                            is_1S_1G_n      = is_1S_1G_i;
-                            gpte_n          = gpte_i;
+                            vpn_n       = vpn_i;        // GVA
+                            is_1S_2M_n  = is_1S_2M_i;
+                            is_1S_1G_n  = is_1S_1G_i;
+                            gpte_n      = gpte_i;
                         end
                         
                         // First-stage translation disabled. Tags come directly from translation logic
                         else begin
-                            pptr_n          = {msiptp_ppn_i, 12'b0} | 
-                                                (rv_iommu::extract_imsic_num(req_iova_i[(riscv::GPLEN-1):12], msi_addr_mask_i) << 4);
+                            
+                            automatic logic [riscv::GPPNW-1:0] imsic_num;
+                            imsic_num = rv_iommu::extract_imsic_num(req_iova_i[(riscv::GPLEN-1):12], msi_addr_mask_i);
+
+                            pptr_n      = {msiptp_ppn_i, 12'b0} | 
+                                            ({{riscv::PLEN-riscv::GPPNW{1'b0}}, imsic_num} << 4);
 
                             // First-stage parameters
-                            vpn_n           = req_iova_i[(riscv::GPLEN-1):12];  // GPA
-                            is_1S_2M_n      = 1'b0;
-                            is_1S_1G_n      = 1'b0;
-                            gpte_n          = '0;
+                            vpn_n       = req_iova_i[(riscv::GPLEN-1):12];  // GPA
+                            is_1S_2M_n  = 1'b0;
+                            is_1S_1G_n  = 1'b0;
+                            gpte_n      = '0;
                         end
-                        /* verilator lint_on WIDTH */
+                        
                         pscid_n         = pscid_i;
                         gscid_n         = gscid_i;
 

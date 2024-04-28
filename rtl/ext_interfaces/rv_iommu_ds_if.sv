@@ -217,5 +217,45 @@ module rv_iommu_ds_if #(
         .oup_valid_o ( {mrif_handler_resp_o.b_valid, msi_ig_resp_o.b_valid, fq_resp_o.b_valid, cq_resp_o.b_valid} ),
         .oup_ready_i ( {mrif_handler_req_i.b_ready, msi_ig_req_i.b_ready, fq_req_i.b_ready, cq_req_i.b_ready} )
     );
-    
+
+    //# Unused signals
+    // Read-only modules
+    assign ptw_resp_o.aw_ready  = 1'b0;
+    assign ptw_resp_o.w_ready   = 1'b0;
+    assign ptw_resp_o.b_valid   = 1'b0;
+    assign ptw_resp_o.b.id      = '0;
+    assign ptw_resp_o.b.resp    = axi_pkg::RESP_SLVERR;
+    assign ptw_resp_o.b.user    = '0;
+
+    assign cdw_resp_o.aw_ready  = 1'b0;
+    assign cdw_resp_o.w_ready   = 1'b0;
+    assign cdw_resp_o.b_valid   = 1'b0;
+    assign cdw_resp_o.b.id      = '0;
+    assign cdw_resp_o.b.resp    = axi_pkg::RESP_SLVERR;
+    assign cdw_resp_o.b.user    = '0;
+
+    assign msiptw_resp_o.aw_ready   = 1'b0;
+    assign msiptw_resp_o.w_ready    = 1'b0;
+    assign msiptw_resp_o.b_valid    = 1'b0;
+    assign msiptw_resp_o.b.id       = '0;
+    assign msiptw_resp_o.b.resp     = axi_pkg::RESP_SLVERR;
+    assign msiptw_resp_o.b.user     = '0;
+
+    // Write-only modules
+    assign fq_resp_o.ar_ready   = 1'b0;
+    assign fq_resp_o.r_valid    = 1'b0;
+    assign fq_resp_o.r.id       = '0;
+    assign fq_resp_o.r.data     = '0;
+    assign fq_resp_o.r.resp     = axi_pkg::RESP_SLVERR;
+    assign fq_resp_o.r.last     = 1'b0;
+    assign fq_resp_o.r.user     = '0;
+
+    assign msi_ig_resp_o.ar_ready   = 1'b0;
+    assign msi_ig_resp_o.r_valid    = 1'b0;
+    assign msi_ig_resp_o.r.id       = '0;
+    assign msi_ig_resp_o.r.data     = '0;
+    assign msi_ig_resp_o.r.resp     = axi_pkg::RESP_SLVERR;
+    assign msi_ig_resp_o.r.last     = 1'b0;
+    assign msi_ig_resp_o.r.user     = '0;
+
 endmodule

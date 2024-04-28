@@ -32,8 +32,6 @@
         # is_implicit = ptw_error_stage2_int_o | (flush_cdw_o & ~is_ddt_walk)
 */
 
-/* verilator lint_off WIDTH */
-
 module rv_iommu_fq_handler #(
     /// AXI Full request struct type
     parameter type  axi_req_t       = logic,
@@ -308,7 +306,7 @@ module rv_iommu_fq_handler #(
                             end
 
                         // Set pptr with the paddr of the next entry
-                        fq_pptr_n = ({fq_base_ppn_i, 12'b0}) | ({masked_tail, 5'b0});
+                        fq_pptr_n = ({fq_base_ppn_i, 12'b0}) | ({{riscv::PLEN-32{1'b0}}, masked_tail} << 5);
 
                         // If a fault that must be reported occurs and the FQ is full, set fq_of and signal error
                         if (fq_tail_i == fq_head_i - 1) begin
@@ -425,5 +423,3 @@ module rv_iommu_fq_handler #(
     end
 
 endmodule
-
-/* verilator lint_on WIDTH */
