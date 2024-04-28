@@ -368,11 +368,12 @@ module rv_iommu_fq_handler #(
                             
                             mem_req_o.b_ready   = 1'b1;
                             fq_ip_o             = fq_ie_i;  // When a new record is written and fie is set, set ipsr.fip
+                            error_wen_o         = 1'b1;
+                            
                             if (mem_resp_i.b.resp != axi_pkg::RESP_OKAY) begin
                                 // AXI error
                                 state_n         = ERROR;
                                 fq_mf_o         = 1'b1;
-                                error_wen_o     = 1'b1;
                             end
 
                             // After writing FQ record we can go back to IDLE

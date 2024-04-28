@@ -48,7 +48,7 @@ module rv_iommu_cq_handler #(
     input  logic                    cmd_ill_i,
     input  logic                    fence_w_ip_i, 
 
-    output logic                    error_wen_o,            // To enable write of corresponding error bit to regmap
+    output logic                    error_wen_o,        // To enable write of corresponding error bit to regmap
     output logic                    cq_mf_o,            // Set when a memory fault occurred during CQ access
     output logic                    cmd_to_o,           // The execution of a command lead to a timeout //! Future work for PCIe ATS
     output logic                    cmd_ill_o,          // Illegal or unsupported command was fetched from CQ

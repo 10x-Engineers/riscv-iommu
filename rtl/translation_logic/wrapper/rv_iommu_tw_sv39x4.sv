@@ -190,8 +190,8 @@ module rv_iommu_tw_sv39x4 #(
 
     // To check whether first and second-stage translation modes are Bare
     logic S1_en, S2_en;
-    assign S1_en    = (dc_base.fsc.mode == 4'b0000);
-    assign S2_en    = (dc_base.iohgatp.mode == 4'b0000);
+    assign S1_en    = (dc_base.fsc.mode != 4'b0000);
+    assign S2_en    = (dc_base.iohgatp.mode != 4'b0000);
 
     // Set for faults occurred before DDTC lookup
     logic   report_always;

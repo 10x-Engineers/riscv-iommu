@@ -144,6 +144,7 @@ module rv_iommu_sw_if_wrapper #(
     // WE signal for cqcsr/fqcsr error bits
     logic   cq_error_wen;
     logic   fq_error_wen;
+    logic   hpm_ip;
 
     // To indicate if the IOMMU supports and uses WSI as interrupt generation mechanism
     logic   wsi_en;
@@ -171,9 +172,10 @@ module rv_iommu_sw_if_wrapper #(
     assign  hw2reg.fqcsr.fqon.de        = 1'b1;
     assign  hw2reg.fqcsr.busy.de        = 1'b1;
     // WE bits for ipsr are always set
-    assign  hw2reg.ipsr.cip.de          = 1'b1;
-    assign  hw2reg.ipsr.fip.de          = 1'b1;
-    assign  hw2reg.ipsr.pmip.de         = 1'b1;
+    assign  hw2reg.ipsr.cip.de          = cq_error_wen;
+    assign  hw2reg.ipsr.fip.de          = fq_error_wen;
+    assign  hw2reg.ipsr.pmip.d          = hpm_ip;
+    assign  hw2reg.ipsr.pmip.de         = hpm_ip;
 
     // Interrupt vectors
     // Priority is defined by the order of the vector: The lower the index, the higher the priority
@@ -459,7 +461,7 @@ module rv_iommu_sw_if_wrapper #(
             .iohpmctr_o     (hw2reg.iohpmctr[N_IOHPMCTR-1:0]),  // event counters value
             .iohpmevt_o     (hw2reg.iohpmevt[N_IOHPMCTR-1:0]),  // event configuration registers
 
-            .hpm_ip_o       (hw2reg.ipsr.pmip.d)    // HPM IP bit.
+            .hpm_ip_o       (hpm_ip)    // HPM IP bit.
         );
 
         // Hardwire unused fields to zero
