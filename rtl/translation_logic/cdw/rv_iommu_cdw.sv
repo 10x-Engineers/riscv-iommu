@@ -387,7 +387,8 @@ module rv_iommu_cdw #(
                                 (!dc_tc.pdtv && dc_tc.dpe) ||
                                 (!caps_amo_hwad_i && (dc_tc.sade || dc_tc.gade)) ||
                                 (fctl_be_i != dc_tc.sbe) ||
-                                (dc_tc.sxl != fctl_gxl_i)) begin
+                                (dc_tc.sxl != fctl_gxl_i)
+                                || (!dc_tc.pdtv)) begin
 
                                 state_n         = ERROR;
                                 cause_n         = rv_iommu::DDT_ENTRY_MISCONFIGURED;
