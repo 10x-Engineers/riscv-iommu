@@ -379,7 +379,13 @@ module rv_iommu_cdw #(
                                 wait_rlast_n    = 1'b1;
                             end
 
-                             // Config checks
+                            else if (!dc_tc.pdtv) begin
+                                state_n         = ERROR;
+                                cause_n         = rv_iommu::TRANS_TYPE_DISALLOWED;
+                                wait_rlast_n    = 1'b1;
+                            end
+
+                            // Config checks
                             else if ((|dc_tc.reserved_1) || (|dc_tc.reserved_2) || 
                                 (!caps_ats_i && (dc_tc.en_ats || dc_tc.en_pri || dc_tc.prpr)) ||
                                 (!dc_tc.en_ats && (dc_tc.t2gpa || dc_tc.en_pri)) ||
@@ -388,8 +394,7 @@ module rv_iommu_cdw #(
                                 (!caps_amo_hwad_i && (dc_tc.sade || dc_tc.gade)) ||
                                 (fctl_be_i != dc_tc.sbe) ||
                                 (dc_tc.sxl != fctl_gxl_i)
-                                || (!dc_tc.pdtv)) begin
-
+                                ) begin
                                 state_n         = ERROR;
                                 cause_n         = rv_iommu::DDT_ENTRY_MISCONFIGURED;
                                 wait_rlast_n    = 1'b1;
