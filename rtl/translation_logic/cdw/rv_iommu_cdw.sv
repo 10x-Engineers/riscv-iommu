@@ -379,7 +379,7 @@ module rv_iommu_cdw #(
                                 wait_rlast_n    = 1'b1;
                             end
 
-                            else if (!dc_tc.pdtv) begin
+                            else if (dc_tc.pdtv) begin
                                 state_n         = ERROR;
                                 cause_n         = rv_iommu::TRANS_TYPE_DISALLOWED;
                                 wait_rlast_n    = 1'b1;
