@@ -224,7 +224,7 @@ assrt_13_ddt_data_corruption:
 assert property (dc_data_corruption_captured && last_beat_cdw |->  riscv_iommu.cause_code == rv_iommu::DDT_DATA_CORRUPTION);
 
 assrt_14_dc_tc_not_valid:
-assert property (dc_tc_not_valid_captured && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_INVALID);
+assert property (wo_data_corruption && dc_tc_not_valid_captured && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_INVALID);
 
 assrt_15_dc_misconfig:
 assert property (wo_data_corruption && dc_misconfig_captured && last_beat_cdw |=> riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_MISCONFIGURED);
@@ -318,7 +318,7 @@ logic ddtc_hit_q, ddtc_miss_q;
 logic dc_loaded_wo_error, dc_loaded_wo_error_captured;
 logic dc_with_data_corruption, dc_with_data_corruption_captured;
 
-assign dc_loaded_wo_error = iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
+assign dc_loaded_wo_error = pdtv_zero_captured || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
 assign dc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
 
 always @(posedge clk_i or negedge rst_ni) begin
@@ -418,3 +418,12 @@ end
 
 //............................DDTC Cache Ended-------------------------------------------------
 
+
+//----------------------------PTW Checks Started-----------------------------------------------
+
+
+
+
+
+
+//----------------------------PTW Checks Ended-----------------------------------------------
