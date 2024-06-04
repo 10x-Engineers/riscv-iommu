@@ -15,21 +15,36 @@
 // Acknowledges: SSRC - Technology Innovation Institute (TII)
 //
 // Description: RISC-V IOMMU Top Module.
+`include "../include/assertions.svh"
+`include "../include/register_interface/typedef.svh"
+
+`include "../packages/dependencies/riscv_pkg.sv"
+`include "../packages/dependencies/lint_wrapper_pkg.sv"
+
+`include "../packages/rv_iommu/rv_iommu_pkg.sv"
+`include "../packages/rv_iommu/rv_iommu_reg_pkg.sv"
+`include "../packages/rv_iommu/rv_iommu_field_pkg.sv"
+
+typedef logic [64-1:0]  reg_addr_t;
+typedef logic [32-1:0]  reg_data_t;
+typedef logic [4-1:0]   reg_strb_t;
+// Define reg_req_t and reg_rsp_t structs
+`REG_BUS_TYPEDEF_ALL(iommu_reg, reg_addr_t, reg_data_t, reg_strb_t)
 
 module riscv_iommu #(
     // Number of IOTLB entries
-    parameter int unsigned  IOTLB_ENTRIES       = 4,
+    parameter int unsigned  IOTLB_ENTRIES       = 16,
     // Number of DDTC entries
-    parameter int unsigned  DDTC_ENTRIES        = 4,
+    parameter int unsigned  DDTC_ENTRIES        = 8,
     // Number of PDTC entries
-    parameter int unsigned  PDTC_ENTRIES        = 4,
+    parameter int unsigned  PDTC_ENTRIES        = 8,
     // Number of MRIF cache entries (if supported)
     parameter int unsigned  MRIFC_ENTRIES       = 4,
 
     // Include process_id support
     parameter bit                   InclPC      = 0,
     // Include AXI4 address boundary check
-    parameter bit                   InclBC      = 0,
+    parameter bit                   InclBC      = 1,
     // Include debug register interface
     parameter bit                   InclDBG     = 0,
     
@@ -38,44 +53,44 @@ module riscv_iommu #(
     // Interrupt Generation Support
     parameter rv_iommu::igs_t       IGS         = rv_iommu::WSI_ONLY,
     // Number of interrupt vectors supported
-    parameter int unsigned          N_INT_VEC   = 16,
+    parameter int unsigned          N_INT_VEC   = lint_wrapper::NumIRQWires,
     // Number of Performance monitoring event counters (set to zero to disable HPM)
-    parameter int unsigned          N_IOHPMCTR  = 0,     // max 31
+    parameter int unsigned          N_IOHPMCTR  = 16,     // max 31
 
     /// AXI Bus Addr width.
-    parameter int   ADDR_WIDTH      = -1,
+    parameter int   ADDR_WIDTH      = lint_wrapper::AddrWidth,
     /// AXI Bus data width.
-    parameter int   DATA_WIDTH      = -1,
+    parameter int   DATA_WIDTH      = lint_wrapper::DataWidth,
     /// AXI ID width
-    parameter int   ID_WIDTH        = -1,
+    parameter int   ID_WIDTH        = lint_wrapper::IdWidth,
     /// AXI ID width
-    parameter int   ID_SLV_WIDTH    = -1,
+    parameter int   ID_SLV_WIDTH    = lint_wrapper::IdWidthSlv,
     /// AXI user width
-    parameter int   USER_WIDTH      = 1,
+    parameter int   USER_WIDTH      = lint_wrapper::UserWidth,
     /// AXI AW Channel struct type
-    parameter type aw_chan_t        = logic,
+    parameter type aw_chan_t        = lint_wrapper::aw_chan_t,
     /// AXI W Channel struct type
-    parameter type w_chan_t         = logic,
+    parameter type w_chan_t         = lint_wrapper::w_chan_t,
     /// AXI B Channel struct type
-    parameter type b_chan_t         = logic,
+    parameter type b_chan_t         = lint_wrapper::b_chan_t,
     /// AXI AR Channel struct type
-    parameter type ar_chan_t        = logic,
+    parameter type ar_chan_t        = lint_wrapper::ar_chan_t,
     /// AXI R Channel struct type
-    parameter type r_chan_t         = logic,
+    parameter type r_chan_t         = lint_wrapper::r_chan_t,
     /// AXI Full request struct type
-    parameter type  axi_req_t       = logic,
+    parameter type  axi_req_t       = lint_wrapper::req_t,
     /// AXI Full response struct type
-    parameter type  axi_rsp_t       = logic,
+    parameter type  axi_rsp_t       = lint_wrapper::resp_t,
     /// AXI Full Slave request struct type
-    parameter type  axi_req_slv_t   = logic,
+    parameter type  axi_req_slv_t   = lint_wrapper::req_slv_t,
     /// AXI Full Slave response struct type
-    parameter type  axi_rsp_slv_t   = logic,
+    parameter type  axi_rsp_slv_t   = lint_wrapper::resp_slv_t,
     /// AXI Full request struct type w/ DVM extension for SMMU
-    parameter type  axi_req_iommu_t = logic,
+    parameter type  axi_req_iommu_t = lint_wrapper::req_iommu_t,
     /// Regbus request struct type.
-    parameter type  reg_req_t       = logic,
+    parameter type  reg_req_t       = iommu_reg_req_t,
     /// Regbus response struct type.
-    parameter type  reg_rsp_t       = logic
+    parameter type  reg_rsp_t       = iommu_reg_rsp_t
 ) (
     input  logic clk_i,
     input  logic rst_ni,
