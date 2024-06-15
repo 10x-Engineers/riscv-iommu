@@ -5,6 +5,7 @@ bind riscv_iommu iommu_sva #(
                                 .MRIFC_ENTRIES(MRIFC_ENTRIES),
                                 .MSITrans(MSITrans),
 				.IGS(IGS),
+                                .InclPC(InclPC),
                                 .N_INT_VEC(N_INT_VEC),
                                 .N_IOHPMCTR(N_IOHPMCTR),
                                 .ADDR_WIDTH(ADDR_WIDTH),

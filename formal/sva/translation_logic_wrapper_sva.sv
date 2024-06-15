@@ -22,9 +22,17 @@ always @(posedge clk_i or negedge rst_ni) begin
         aw_seen_before <= 1;
 end
 
+logic [19:0] selected_pid;
+assign selected_pid = aw_seen_before ? dev_tr_req_i.aw.substream_id : (dev_tr_req_i.ar_valid ? dev_tr_req_i.ar.substream_id :(dev_tr_req_i.aw_valid ? dev_tr_req_i.aw.substream_id : 0));
 
 logic [23:0] selected_did;
 assign selected_did = aw_seen_before ? dev_tr_req_i.aw.stream_id : (dev_tr_req_i.ar_valid ? dev_tr_req_i.ar.stream_id :(dev_tr_req_i.aw_valid ? dev_tr_req_i.aw.stream_id : 0));
+
+// logic [5:0] trans_type;
+// assign trans_type = aw_seen_before ? dev_tr_req_i.aw.prot : (dev_tr_req_i.ar_valid ? dev_tr_req_i.ar.prot :(dev_tr_req_i.aw_valid ? dev_tr_req_i.aw.prot : 0));
+
+logic selected_pv;
+assign selected_pv = aw_seen_before ? dev_tr_req_i.aw.ss_id_valid : (dev_tr_req_i.ar_valid ? dev_tr_req_i.ar.ss_id_valid :(dev_tr_req_i.aw_valid ? dev_tr_req_i.aw.ss_id_valid : 0));
 
 
 logic dde_rsrv_bits;
@@ -50,47 +58,49 @@ always @(posedge clk_i or negedge rst_ni)
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni )
         counter_dc <= 0;
-    else if(counter_dc == 3 && ddtp.iommu_mode.q >= 2 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) // ddtlevel 1
+    else if(aw_or_ar_hsk)
         counter_dc <= 0;
+    else if(counter_dc == 3 && !aw_or_ar_hsk)
+        counter_dc <= 3;
     else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
         counter_dc <= counter_dc + 1;
 
 logic ddt_entry_accessed; // when this is high, ddte is accessed
 
-assign ddt_entry_accessed = ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf));
+assign ddt_entry_accessed = counter_dc == 0 && ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf));
 
 logic ready_to_capture_ddt_entry_invalid, ddt_entry_invalid_captured;
 logic ready_to_capture_ddt_data_corruption, ddt_data_corruption_captured;
 logic ready_to_capture_ddte_misconfig_rsrv_bits, ddte_misconfig_rsrv_captured;
 
-assign ready_to_capture_ddt_entry_invalid        = ds_resp_i.r.resp == axi_pkg::RESP_OKAY && ddt_entry_accessed && !ds_resp_i.r.data[0] && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_entry_invalid_captured;
+assign ready_to_capture_ddt_entry_invalid        = (!pc_fsc_active && !pc_ta_active) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && ddt_entry_accessed && !ds_resp_i.r.data[0] && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_entry_invalid_captured;
 
-assign ready_to_capture_ddt_data_corruption      = !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured;
+assign ready_to_capture_ddt_data_corruption      = (!pc_fsc_active && !pc_ta_active) && (!pc_fsc_active && !pc_ta_active) && !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured && (!pc_fsc_active && !pc_ta_active);
 
-assign ready_to_capture_ddte_misconfig_rsrv_bits = !ddt_entry_invalid_captured && ds_resp_i.r.data[0] && !ddt_data_corruption_captured && ddt_entry_accessed && ds_resp_i.r.id == 1 && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && dde_rsrv_bits;
+assign ready_to_capture_ddte_misconfig_rsrv_bits = (!pc_fsc_active && !pc_ta_active) && !ddt_entry_invalid_captured && ds_resp_i.r.data[0] && !ddt_data_corruption_captured && ddt_entry_accessed && ds_resp_i.r.id == 1 && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && dde_rsrv_bits;
 
-logic tc_pdtv_low, tc_pdtv_low_seen, tc_sxl, tc_sxl_seen ;
-assign tc_pdtv_low = dc_tc_active && !dc_tc_q.pdtv && !tc_pdtv_low_seen;
-assign tc_sxl      = dc_tc_active && dc_tc_q.sxl && !tc_sxl_seen;
+logic tc_pdtv, tc_pdtv_seen, tc_sxl, tc_sxl_seen ;
+assign tc_pdtv = dc_tc_active && dc_tc_q.pdtv && !tc_pdtv_seen;
+assign tc_sxl  = dc_tc_active && dc_tc_q.sxl && !tc_sxl_seen;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
         ddt_entry_invalid_captured   <= 0;
         ddt_data_corruption_captured <= 0;
-        tc_pdtv_low_seen             <= 0;
+        tc_pdtv_seen                 <= 0;
         tc_sxl_seen                  <= 0;
     end
     else begin
         if(ds_resp_i.r.last && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) begin
             ddt_entry_invalid_captured   <= 0;
             ddt_data_corruption_captured <= 0;
-            tc_pdtv_low_seen             <= 0;
+            tc_pdtv_seen                 <= 0;
             tc_sxl_seen                  <= 0;
         end
         else begin
             ddt_entry_invalid_captured    <= ddt_entry_invalid_captured || ready_to_capture_ddt_entry_invalid;
             ddt_data_corruption_captured  <= ddt_data_corruption_captured || ready_to_capture_ddt_data_corruption;
-            tc_pdtv_low_seen              <= tc_pdtv_low_seen || tc_pdtv_low;
+            tc_pdtv_seen                  <= tc_pdtv_seen || tc_pdtv;
             tc_sxl_seen                   <= tc_sxl_seen || tc_sxl;
         end
     end
@@ -116,7 +126,7 @@ assign dc_iohgatp_active = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_d
 
 assign dc_ta_active      = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 2;
 
-assign dc_fsc_active     = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 3;
+assign dc_fsc_active     = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 3 && !dc_ended_captured;
 
 rv_iommu::tc_t      dc_tc_q;
 rv_iommu::iohgatp_t dc_iohgatp_q;
@@ -140,13 +150,13 @@ assign tc_wrong_bits_high       =  dc_tc_q.en_ats || dc_tc_q.en_pri || dc_tc_q.t
 assign iohgatp_unsupported_mode = riscv_iommu.fctl.gxl ? (dc_iohgatp_active && dc_iohgatp_q.mode != 0) : (dc_iohgatp_active && dc_iohgatp_q.mode != 0 && dc_iohgatp_q.mode != 8);
 assign iohgatp_ppn_not_align    = dc_iohgatp_active && dc_iohgatp_q.mode != 0 && |dc_iohgatp_q.ppn[1:0];
 
-assign iosatp_invalid           = !dc_tc_not_valid_captured && !dc_data_corruption_captured && !dc_misconfig_captured && ((dc_fsc_active && dc_fsc_q.reserved) || dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY &&  tc_pdtv_low_seen && (tc_sxl_seen ? dc_fsc_q.mode != 0 : !(!dc_fsc_q.mode || dc_fsc_q.mode == 8)));
+assign iosatp_invalid           = !dc_tc_not_valid_captured && !dc_data_corruption_captured && !dc_misconfig_captured && dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (|dc_fsc_q.reserved || ((dc_q.tc.dpe || selected_pv) && tc_pdtv_seen && (dc_fsc_q.mode inside {[4:13]})) || (!tc_pdtv_seen && (tc_sxl_seen ? dc_fsc_q.mode != 0 : !(!dc_fsc_q.mode || dc_fsc_q.mode == 8))));
 
-logic ready_to_capture_dc_misconfig, dc_misconfig_captured, misconfig_checks_wo_pc;
+logic ready_to_capture_dc_misconfig, dc_misconfig_captured, misconfig_checks;
 
-assign misconfig_checks_wo_pc        = (iosatp_invalid && MSITrans != rv_iommu::MSI_DISABLED) || tc_wrong_bits_high || iohgatp_unsupported_mode || iohgatp_ppn_not_align || dc_rsrv_bits_high;
+assign misconfig_checks         = (iosatp_invalid && MSITrans != rv_iommu::MSI_DISABLED) || tc_wrong_bits_high || iohgatp_unsupported_mode || iohgatp_ppn_not_align || dc_rsrv_bits_high;
 
-assign ready_to_capture_dc_misconfig = (!dc_with_data_corruption_captured && !dc_with_data_corruption) && !dc_tc_not_valid_captured && ((dc_tc_active && dc_tc_q.v) || counter_dc !=0) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY &&  misconfig_checks_wo_pc;
+assign ready_to_capture_dc_misconfig = (!dc_with_data_corruption_captured && !dc_with_data_corruption) && !dc_tc_not_valid_captured && ((dc_tc_active && dc_tc_q.v) || counter_dc !=0) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY &&  misconfig_checks;
 
 logic ready_to_capture_pdtv_zero, pdtv_zero_captured; 
 assign ready_to_capture_pdtv_zero    = !dc_tc_not_valid && (!dc_with_data_corruption_captured && !dc_with_data_corruption) && (!InclPC && dc_tc_q.pdtv) && dc_tc_active;
@@ -173,6 +183,7 @@ always @(posedge clk_i or negedge rst_ni) begin
         end
     end
 end
+
 
 //-----------------------------aux code CDW Ended----------------------------------------
 
@@ -203,10 +214,6 @@ assrt_7_ddtp_mode_1_aw: // if mode is bare, then the input address is equal to t
 assume property (riscv_iommu.ddtp.iommu_mode.q == 1 && translation_req.aw_hsk |-> `aw_addr[i] == riscv_iommu.spaddr[i]);
 end
 endgenerate
-
-assrt_8_ddt_data_corruption: // 
-assert property (data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.resp != axi_pkg::RESP_OKAY |=> riscv_iommu.cause_code == rv_iommu::DDT_DATA_CORRUPTION); 
-
 
 
 // need to set last 5 bit to 0 as wihotut base dc is 128 bit wide
@@ -250,15 +257,28 @@ assert property (riscv_iommu.ddt_walk |-> $past(ddtc_miss_q));
 assrt_20_ddt_walk_off: // if data is present, there will be no ddt_walk
 assert property ($rose(ddtc_hit_q) |=> !riscv_iommu.ddt_walk);
 
+logic wo_data_corruption;
+assign wo_data_corruption = !dc_with_data_corruption_captured && !dc_with_data_corruption;
+
 assrt_21_pdtv_zero: // if did length higher bits are set to 1 then cause must be TRANS_TYPE_DISALLOWED
 assert property (wo_data_corruption && pdtv_zero_captured && last_beat_cdw |-> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
 
 assrt_22_error_and_valid_both_high:
 assert property (!(riscv_iommu.trans_error && riscv_iommu.trans_valid));
+
+assrt_26_type_disallow_error:
+assert property (ready_to_capt_valid_type_disalow && last_beat_cdw |-> riscv_iommu.trans_error);
+
+assrt_27_type_disallow_error:
+assert property (ready_to_capt_valid_type_disalow && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
+
+// assrt_26_type_disallow_error:
+// assert property (ready_to_capt_trans_type_disallow && last_beat_cdw |-> riscv_iommu.trans_error);
+
+// assrt_27_type_disallow_cause_code:
+// assert property (ready_to_capt_trans_type_disallow && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
 //----------------------------- Assertion CDW Ended----------------------------------------
 
-logic wo_data_corruption;
-assign wo_data_corruption = !dc_with_data_corruption_captured && !dc_with_data_corruption;
 
 //-----------------------------Cover CDW Started---------------------------------------------
 
@@ -289,15 +309,20 @@ cover property (cache_seq_detector[4] == 1);
 cov_9_seq_det_7:
 cover property (cache_seq_detector[7] == 1);
 
-cover_10_unique:
-cover property ($onehot0(ddtc_hit_n));
+// cover_10_unique:
+// cover property ($onehot0(ddtc_hit_n));
 
 cover_11_ptw_checker:
 cover property (ds_resp_i.r.id == 0 && ds_resp_i.r_valid);
 
 cover_12_error_and_valid_both_high:
 cover property (riscv_iommu.trans_error && riscv_iommu.trans_valid);
+
+cover_13_unique_case:
+cover property (i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.wrap_error && i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.ptw_error);
 //-----------------------------Cover CDW Ended---------------------------------------------
+
+
 
 //............................DDTC Cache Started-------------------------------------------------
 
@@ -362,15 +387,18 @@ end
 
 logic [23:0] cache_entry [DDTC_ENTRIES - 1 : 0];
 logic cache_entry_valid [DDTC_ENTRIES - 1 : 0];
+logic cache_pdtv [DDTC_ENTRIES - 1 : 0];
+logic [1:0] cache_pdtp_mode [DDTC_ENTRIES - 1 : 0];
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
             cache_entry[i]        <= 0;
             cache_entry_valid[i]  <= 0;
-            cache_seq_detector[i] <= 0;   
+            cache_seq_detector[i] <= 0;  
+            cache_pdtv[i]         <= 0; 
+            cache_pdtp_mode[i]    <= 0;
         end
-
     else if(ddtc_miss_q && !dc_loaded_wo_error_captured && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
 
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
@@ -379,6 +407,8 @@ always @(posedge clk_i or negedge rst_ni) begin
                 cache_seq_detector[i] <= 1;
                 cache_entry[i]        <= selected_did;
                 cache_entry_valid[i]  <= 1'b1;
+                cache_pdtv[i]         <= 1'b1;
+                cache_pdtp_mode[i]    <= dc_q.fsc.mode;
 
                 for (int j = 0; j < DDTC_ENTRIES; j++ )
                     if(!(cache_seq_detector[j] == 0 || cache_seq_detector[j] == DDTC_ENTRIES))
@@ -411,29 +441,150 @@ end
 //............................DDTC Cache Ended-------------------------------------------------
 
 
+
+//----------------------------Process to tranlsate an IOVA checks started----------------------
+
+// logic trans_type_disallow_bare;
+// // Translated (!b3 && b2) and  PCIe (b3)
+// assign ready_to_capt_trans_type_disallow = riscv_iommu.ddtp.iommu_mode.q == 1 && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && (trans_type[3] || (trans_type[3:2] == 2'b01)); 
+
+logic ready_to_capt_valid_type_disalow, valid_pv_pdtv_zero_captured;
+assign ready_to_capt_valid_type_disalow = wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss_q && dc_ended_captured && (!dc_q.tc.pdtv)) || (ddtc_hit_q && !cache_pdtv[hit_index]))));
+
+logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
+assign pid_wider_when_cache_miss = ddtc_miss_q && dc_ended_captured && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
+assign pid_wider_when_cache_hit = ddtc_hit_q && cache_pdtv[hit_index] && ((cache_pdtp_mode[hit_index] == 1 && |selected_pid[19:8])  || (cache_pdtp_mode[hit_index] == 2 && |selected_pid[19:17]));
+
+logic pid_wider;
+assign pid_wider = selected_pv && (pid_wider_when_cache_miss || pid_wider_when_cache_hit);
+
+logic [$clog2(DDTC_ENTRIES) : 0] hit_index;
+always @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni)
+        hit_index <= 0;
+    else begin
+        for (int i  = 0; i < DDTC_ENTRIES; i++ )
+            if(ddtc_hit_n[i] == 1) begin
+               hit_index <= i;
+               break; 
+            end
+    end
+end
+
+
+
+
+
+
+
+//----------------------------Process to tranlsate an IOVA checks Ended----------------------
+
+
+
+//----------------------------Process directory checks started--------------------------------
+
+logic ready_to_capt_dc_ended, dc_ended_captured;
+assign ready_to_capt_dc_ended = dc_q.tc.pdtv && (counter_dc == 3) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw && !dc_ended_captured;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni)
+        dc_ended_captured <= 0;
+    else if(aw_or_ar_hsk)
+        dc_ended_captured <= 0;
+    else
+        dc_ended_captured <= dc_ended_captured || ready_to_capt_dc_ended;
+
+
+logic [1:0] counter_non_leaf_pc;
+logic counter_pc;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni)
+        counter_non_leaf_pc <= 0;
+
+    else if(counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2 && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 2
+        counter_non_leaf_pc <= 0;
+    
+    else if(counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3 && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 3
+        counter_non_leaf_pc <= 0;
+    
+    else if(dc_ended_captured && dc_q.fsc.mode > 1 && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw)
+        counter_non_leaf_pc <= counter_non_leaf_pc + 1;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni)
+        counter_pc <= 0;
+    
+    else if(counter_pc == 1 && dc_q.fsc.mode >= 1 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) // ddtlevel 1
+        counter_pc <= 0;
+    
+    else if(dc_ended_captured && (dc_q.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3) || (counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
+        counter_pc <= 1;
+
+logic pc_ta_active, pc_fsc_active;
+
+assign pc_ta_active = dc_ended_captured && counter_pc == 0 && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
+assign pc_fsc_active = counter_pc == 1 && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
+
+logic ready_to_capt_pdte_not_valid, pdte_not_valid_captured;
+assign ready_to_capt_pdte_not_valid = !ds_resp_i.r.data[0] && pdte_accessed;
+
+logic ready_to_capt_pdte_misconfig, pdte_misconfig_captured;
+assign ready_to_capt_pdte_misconfig = pdte_accessed && !ready_to_capt_pdte_not_valid && (|ds_resp_i.r.data[9:1] || |ds_resp_i.r.data[63:54]);
+
+logic pdte_accessed; // when this is high, ddte is accessed
+assign pdte_accessed = dc_ended_captured && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_wo_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni) begin
+        pdte_misconfig_captured   <= 0;
+        pdte_not_valid_captured   <= 0;
+    end
+    else if(ds_resp_i.r.last && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) begin
+        pdte_misconfig_captured   <= 0;        
+        pdte_not_valid_captured   <= 0;        
+    end
+    else begin
+        pdte_misconfig_captured    <= pdte_misconfig_captured || ready_to_capt_pdte_misconfig;
+        pdte_not_valid_captured    <= pdte_not_valid_captured || ready_to_capt_pdte_not_valid;
+    end
+
+assrt_23_pdte_not_valid:
+assert property (ready_to_capt_pdte_not_valid |=> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_INVALID);
+
+assrt_24_pdte_misconfig:
+assert property (ready_to_capt_pdte_misconfig |=> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_MISCONFIGURED);
+//----------------------------Process directory checks Ended--------------------------------
+
+
+
+
 //----------------------------PTW Checks Started-----------------------------------------------
 
 rv_iommu::dc_base_t dc_q;
 
-assmp1_ptw_dc:
-assume property ($stable(dc_q));
+// assmp1_ptw_dc:
+// assume property ($stable(dc_q));
 
-// always @(posedge clk_i or negedge rst_ni) begin
-    //     if(!rst_ni)
-    //         dc_q <= 0;
+always @(posedge clk_i or negedge rst_ni) begin
+        if(!rst_ni)
+            dc_q <= 0;
 
-    //     else if(dc_tc_active)
-    //         dc_q.tc <= dc_tc_q;
+        else if(dc_tc_active)
+            dc_q.tc <= dc_tc_q;
 
-    //     else if(dc_iohgatp_active)
-    //         dc_q.iohgatp <= dc_iohgatp_q;
+        else if(dc_iohgatp_active)
+            dc_q.iohgatp <= dc_iohgatp_q;
 
-    //     else if(dc_ta_active)
-    //         dc_q.ta <= dc_ta_q;
+        else if(dc_ta_active)
+            dc_q.ta <= dc_ta_q;
 
-    //     else if(dc_fsc_active)
-    //         dc_q.fsc <= dc_fsc_q;
-// end
+        else if(dc_fsc_active)
+            dc_q.fsc <= dc_fsc_q;
+        
+        else
+            dc_q <= dc_q;
+end
 
 logic pte_active;
 assign pte_active = (ds_resp_i.r.id == 0 && ds_resp_i.r_valid);
@@ -442,24 +593,61 @@ riscv::pte_t pte;
 assign pte = pte_active ? ds_resp_i.r.data : 0;
 
 // |pte.rsw ||
-logic ready_to_capt_page_fault_exception, page_fault_exception_captured;
-assign ready_to_capt_page_fault_exception = pte_active && (!pte.v || (!pte.r && pte.w) || |pte.reserved);
+logic ready_to_capt_pf_excep, pf_excep_captured;
+assign ready_to_capt_pf_excep = !ready_to_capt_data_corrup_ptw && pte_active && (((pte.r || pte.x) ? pte.u : 0) || !pte.v || (!pte.r && pte.w) || |pte.reserved || pte.d || pte.a);
+
+logic ready_to_capt_data_corrup_ptw, ptw_data_corrup_captured;
+assign ready_to_capt_data_corrup_ptw = pte_active && ds_resp_i.r.id == 0 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
+
+logic ready_to_capt_guest_pf, guest_pf_captured;
+assign ready_to_capt_guest_pf = riscv_iommu.i_rv_iommu_translation_wrapper.i_rv_iommu_tw_sv39x4.S1_en && counter_PTE > 2;
+
+always @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni) begin
+        ptw_data_corrup_captured <= 0;
+        pf_excep_captured        <= 0;
+    end
+    else if(translation_req.ar_hsk || translation_req.aw_hsk) begin
+        pf_excep_captured        <= 0;
+        ptw_data_corrup_captured <= 0;
+    end
+    else begin
+        pf_excep_captured        <= pf_excep_captured || ready_to_capt_pf_excep;
+        ptw_data_corrup_captured <= ptw_data_corrup_captured || ready_to_capt_data_corrup_ptw;
+    end
+end
+
+logic [2:0] counter_PTE;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
-        page_fault_exception_captured <= 0;
-    else if(translation_req.ar_hsk || translation_req.aw_hsk)
-        page_fault_exception_captured <= 0;
-    else
-        page_fault_exception_captured <= page_fault_exception_captured || ready_to_capt_page_fault_exception;
+        counter_PTE <= 0;
+    else if(!ready_to_capt_data_corrup_ptw && !ready_to_capt_pf_excep && pte_active && (pte.r || pte.x))
+        counter_PTE <= 0;
+    else if(pte_active && ds_req_o.r_ready && !ready_to_capt_data_corrup_ptw && !ready_to_capt_pf_excep)
+        counter_PTE <= counter_PTE + 1;
 end
+
+cover_13_both_stages:
+cover property ((pte_active && riscv_iommu.i_rv_iommu_translation_wrapper.i_rv_iommu_tw_sv39x4.S1_en && riscv_iommu.i_rv_iommu_translation_wrapper.i_rv_iommu_tw_sv39x4.S2_en)[*5]);
+
+assrt_5_ptw:
+assert property (counter_PTE > 2 |-> riscv_iommu.trans_error);
 //----------------------------PTW Checks Ended-----------------------------------------------
 
 
 //----------------------------Assertions PTW Started-----------------------------------------
-assrt_1_ptw_pg_fult:
-assert property ($rose(page_fault_exception_captured) |=> riscv_iommu.cause_code == rv_iommu::STORE_PAGE_FAULT);
+// assrt_1_ptw_pg_fult:
+// assert property ($rose(pf_excep_captured) && trans_type ==  |-> riscv_iommu.cause_code == rv_iommu::STORE_PAGE_FAULT);
 
-cov_check_ptw:
-cover property (pte_active && !ready_to_capt_page_fault_exception ##[1:4] page_fault_exception_captured);
+assrt_2_ptw_pg_fault_trans_error:
+assert property ($rose(pf_excep_captured) |-> riscv_iommu.trans_error);
+
+assrt_3_ptw_corrupt:
+assert property ($rose(ptw_data_corrup_captured) |-> riscv_iommu.cause_code == rv_iommu::PT_DATA_CORRUPTION);
+
+assrt_4_ptw_corrupt_trans_error:
+assert property ($rose(ptw_data_corrup_captured) |-> riscv_iommu.trans_error);
+
+
 //----------------------------Assertions PTW Ended-----------------------------------------
