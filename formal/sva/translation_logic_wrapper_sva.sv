@@ -514,10 +514,12 @@ always @(posedge clk_i or negedge rst_ni)
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni)
         counter_pc <= 0;
-    
-    else if(counter_pc == 1 && dc_q.fsc.mode >= 1 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) // ddtlevel 1
+    else if(aw_or_ar_hsk)
         counter_pc <= 0;
-    
+    else if(counter_pc == 1 && !aw_or_ar_hsk)
+        counter_dc <= 1;
+    // else if(counter_pc == 1 && dc_q.fsc.mode >= 1 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) // ddtlevel 1
+    //     counter_pc <= 0;
     else if(dc_ended_captured && (dc_q.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3) || (counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
         counter_pc <= 1;
 
