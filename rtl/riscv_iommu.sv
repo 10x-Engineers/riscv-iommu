@@ -42,7 +42,7 @@ module riscv_iommu #(
     parameter int unsigned  MRIFC_ENTRIES       = 4,
 
     // Include process_id support
-    parameter bit                   InclPC      = 0,
+    parameter bit                   InclPC      = 1,
     // Include AXI4 address boundary check
     parameter bit                   InclBC      = 1,
     // Include debug register interface
