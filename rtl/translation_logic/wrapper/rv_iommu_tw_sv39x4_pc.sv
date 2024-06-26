@@ -971,10 +971,10 @@ module rv_iommu_tw_sv39x4_pc #(
                     - (3): U-mode transaction and PTE has U=0;
                     - (4): S-mode transaction and PTE has U=1 and (SUM=0 or x=1).
                 */
-                if  ((is_store && (!iotlb_lu_1S_content.w && S1_en)                                                 ) ||    // (1)
-                        (is_rx && (!iotlb_lu_1S_content.x && S1_en)                                                 ) ||    // (2)
-                        ((!priv_lvl_i) && !iotlb_lu_1S_content.u && S1_en                                           ) ||    // (3)
-                        (priv_lvl_i && iotlb_lu_1S_content.u && (!pdtc_lu_content.ta.sum || iotlb_lu_1S_content.x)  )       // (4)
+                if  ((is_store && !iotlb_lu_1S_content.w && S1_en                                              ) ||    // (1)
+                    (is_rx && !iotlb_lu_1S_content.r && !iotlb_lu_1S_content.x && S1_en                       ) ||    // (2)
+                    ((!priv_lvl_i) && !iotlb_lu_1S_content.u && S1_en                                         ) ||    // (3)
+                    (priv_lvl_i && iotlb_lu_1S_content.u && (!pdtc_lu_content.ta.sum || is_rx)                )       // (4)
                     ) begin
                         if (is_store)   wrap_cause_code = rv_iommu::STORE_PAGE_FAULT;
                         else            wrap_cause_code = rv_iommu::LOAD_PAGE_FAULT;
