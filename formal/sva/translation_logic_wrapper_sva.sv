@@ -62,7 +62,7 @@ always @(posedge clk_i or negedge rst_ni)
         counter_dc <= 0;
     else if(counter_dc == 3 && !aw_or_ar_hsk)
         counter_dc <= 3;
-    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
+    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddtc_hit_q)
         counter_dc <= counter_dc + 1;
 
 logic ddt_entry_accessed; // when this is high, ddte is accessed
@@ -150,7 +150,7 @@ assign tc_wrong_bits_high       =  dc_tc_q.en_ats || dc_tc_q.en_pri || dc_tc_q.t
 assign iohgatp_unsupported_mode = riscv_iommu.fctl.gxl ? (dc_iohgatp_active && dc_iohgatp_q.mode != 0) : (dc_iohgatp_active && dc_iohgatp_q.mode != 0 && dc_iohgatp_q.mode != 8);
 assign iohgatp_ppn_not_align    = dc_iohgatp_active && dc_iohgatp_q.mode != 0 && |dc_iohgatp_q.ppn[1:0];
 
-assign iosatp_invalid           = !dc_tc_not_valid_captured && !dc_data_corruption_captured && !dc_misconfig_captured && dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (|dc_fsc_q.reserved || ((dc_q.tc.dpe || selected_pv) && tc_pdtv_seen && (dc_fsc_q.mode inside {[4:13]})) || (!tc_pdtv_seen && (tc_sxl_seen ? dc_fsc_q.mode != 0 : !(!dc_fsc_q.mode || dc_fsc_q.mode == 8))));
+assign iosatp_invalid           = !dc_tc_not_valid_captured && !dc_data_corruption_captured && !dc_misconfig_captured && dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (|dc_fsc_q.reserved || (tc_pdtv_seen && (dc_fsc_q.mode inside {[4:15]})) || (!tc_pdtv_seen && (tc_sxl_seen ? dc_fsc_q.mode != 0 : !(!dc_fsc_q.mode || dc_fsc_q.mode == 8))));
 
 logic ready_to_capture_dc_misconfig, dc_misconfig_captured, misconfig_checks;
 
@@ -239,8 +239,11 @@ assert property (wo_data_corruption && dc_tc_not_valid_captured && last_beat_cdw
 assrt_15_dc_misconfig:
 assert property (wo_data_corruption && dc_misconfig_captured && last_beat_cdw |=> riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_MISCONFIGURED);
 
-assrt_16_dc_misconfig_wo_pc:
+assrt_16_dc_misconfig_pc:
 assert property (iosatp_invalid |=> riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_MISCONFIGURED );
+
+assrt_16_2_dc_misconfig_pc:
+assert property (iosatp_invalid |=> riscv_iommu.trans_error);
 
 logic not_ddte;
 assign not_ddte = ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3));
@@ -295,7 +298,7 @@ cov_4_dc_misconfig:
 cover property (dc_misconfig_captured && last_beat_cdw);
 
 cov_5_error:
-cover property (riscv_iommu.trans_error && riscv_iommu.cause_code != 260 ##[1:$] !dc_loaded_wo_error && correct_did && riscv_iommu.cause_code == 260 );
+cover property (riscv_iommu.trans_error && riscv_iommu.cause_code != 260 ##[1:$] !dc_loaded_with_error && correct_did && riscv_iommu.cause_code == 260 );
 
 cov_6_checking_cache:
 cover property ($rose(ddtc_hit_q) ##[0:$] $rose(ddtc_miss_q));
@@ -332,25 +335,25 @@ logic [$clog2(DDTC_ENTRIES) : 0] cache_seq_detector [DDTC_ENTRIES - 1 : 0];
 logic [DDTC_ENTRIES - 1 : 0] ddtc_hit_n, ddtc_miss_n;
 logic ddtc_hit_q, ddtc_miss_q;
 
-logic dc_loaded_wo_error, dc_loaded_wo_error_captured;
+logic dc_loaded_with_error, dc_loaded_with_error_captured;
 logic dc_with_data_corruption, dc_with_data_corruption_captured;
 
-assign dc_loaded_wo_error = pdtv_zero_captured || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
+assign dc_loaded_with_error = pdtv_zero_captured || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
 assign dc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
-        dc_loaded_wo_error_captured         <= 0;
+        dc_loaded_with_error_captured         <= 0;
         dc_with_data_corruption_captured    <= 0;
     end
         
     else if(translation_req.ar_hsk || translation_req.aw_hsk) begin
-        dc_loaded_wo_error_captured         <= 0;
+        dc_loaded_with_error_captured         <= 0;
         dc_with_data_corruption_captured    <= 0;
     end
         
     else begin
-        dc_loaded_wo_error_captured         <= dc_loaded_wo_error_captured || dc_loaded_wo_error;
+        dc_loaded_with_error_captured         <= dc_loaded_with_error_captured || dc_loaded_with_error;
         dc_with_data_corruption_captured    <= dc_with_data_corruption_captured || dc_with_data_corruption;
     end
         
@@ -399,7 +402,7 @@ always @(posedge clk_i or negedge rst_ni) begin
             cache_pdtv[i]         <= 0; 
             cache_pdtp_mode[i]    <= 0;
         end
-    else if(ddtc_miss_q && !dc_loaded_wo_error_captured && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
+    else if(ddtc_miss_q && !dc_loaded_with_error_captured && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
 
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
             if((cache_seq_detector[i] == 0 || cache_seq_detector[i] == DDTC_ENTRIES)) begin
@@ -449,7 +452,7 @@ end
 // assign ready_to_capt_trans_type_disallow = riscv_iommu.ddtp.iommu_mode.q == 1 && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && (trans_type[3] || (trans_type[3:2] == 2'b01)); 
 
 logic ready_to_capt_valid_type_disalow, valid_pv_pdtv_zero_captured;
-assign ready_to_capt_valid_type_disalow = wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss_q && dc_ended_captured && (!dc_q.tc.pdtv)) || (ddtc_hit_q && !cache_pdtv[hit_index]))));
+assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_captured && wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss_q && dc_ended_captured && (!dc_q.tc.pdtv)) || (ddtc_hit_q && !cache_pdtv[hit_index]))));
 
 logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
 assign pid_wider_when_cache_miss = ddtc_miss_q && dc_ended_captured && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
@@ -517,9 +520,7 @@ always @(posedge clk_i or negedge rst_ni)
     else if(aw_or_ar_hsk)
         counter_pc <= 0;
     else if(counter_pc == 1 && !aw_or_ar_hsk)
-        counter_dc <= 1;
-    // else if(counter_pc == 1 && dc_q.fsc.mode >= 1 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) // ddtlevel 1
-    //     counter_pc <= 0;
+        counter_pc <= 1;
     else if(dc_ended_captured && (dc_q.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3) || (counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
         counter_pc <= 1;
 
@@ -534,8 +535,8 @@ assign ready_to_capt_pdte_not_valid = !ds_resp_i.r.data[0] && pdte_accessed;
 logic ready_to_capt_pdte_misconfig, pdte_misconfig_captured;
 assign ready_to_capt_pdte_misconfig = pdte_accessed && !ready_to_capt_pdte_not_valid && (|ds_resp_i.r.data[9:1] || |ds_resp_i.r.data[63:54]);
 
-logic pdte_accessed; // when this is high, ddte is accessed
-assign pdte_accessed = dc_ended_captured && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_wo_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
+logic pdte_accessed; // when this is high, pdte is accessed
+assign pdte_accessed = dc_ended_captured && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_with_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni) begin

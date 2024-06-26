@@ -34,6 +34,9 @@ assume property (`aw_valid && !`aw_ready |=> $stable(riscv_iommu.ddtp.iommu_mode
 
 assmp5_length_small:
 assume property (dev_tr_req_i.aw.len < 5 && dev_tr_req_i.ar.len < 5);
+
+assmp6_iohgatp_mode_bare:
+assume property (dc_iohgatp_active |-> dc_iohgatp_q.mode == 0 );
 // assmp5_ddtp_stable_whole_time:
 // assume property ($stable (riscv_iommu.ddtp.iommu_mode.q));
 
