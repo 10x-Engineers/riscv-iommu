@@ -156,10 +156,10 @@ logic ready_to_capture_dc_misconfig, dc_misconfig_captured, misconfig_checks;
 
 assign misconfig_checks         = (iosatp_invalid && MSITrans != rv_iommu::MSI_DISABLED) || tc_wrong_bits_high || iohgatp_unsupported_mode || iohgatp_ppn_not_align || dc_rsrv_bits_high;
 
-assign ready_to_capture_dc_misconfig = (!dc_with_data_corruption_captured && !dc_with_data_corruption) && !dc_tc_not_valid_captured && ((dc_tc_active && dc_tc_q.v) || counter_dc !=0) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY &&  misconfig_checks;
+assign ready_to_capture_dc_misconfig = (!dc_pc_with_data_corruption_captured && !dc_pc_with_data_corruption) && !dc_tc_not_valid_captured && ((dc_tc_active && dc_tc_q.v) || counter_dc !=0) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY &&  misconfig_checks;
 
 logic ready_to_capture_pdtv_zero, pdtv_zero_captured; 
-assign ready_to_capture_pdtv_zero    = !dc_tc_not_valid && (!dc_with_data_corruption_captured && !dc_with_data_corruption) && (!InclPC && dc_tc_q.pdtv) && dc_tc_active;
+assign ready_to_capture_pdtv_zero    = !dc_tc_not_valid && (!dc_pc_with_data_corruption_captured && !dc_pc_with_data_corruption) && (!InclPC && dc_tc_q.pdtv) && dc_tc_active;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
@@ -261,7 +261,7 @@ assrt_20_ddt_walk_off: // if data is present, there will be no ddt_walk
 assert property ($rose(ddtc_hit_q) |=> !riscv_iommu.ddt_walk);
 
 logic wo_data_corruption;
-assign wo_data_corruption = !dc_with_data_corruption_captured && !dc_with_data_corruption;
+assign wo_data_corruption = !dc_pc_with_data_corruption_captured && !dc_pc_with_data_corruption;
 
 assrt_21_pdtv_zero: // if did length higher bits are set to 1 then cause must be TRANS_TYPE_DISALLOWED
 assert property (wo_data_corruption && pdtv_zero_captured && last_beat_cdw |-> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
@@ -336,25 +336,25 @@ logic [DDTC_ENTRIES - 1 : 0] ddtc_hit_n, ddtc_miss_n;
 logic ddtc_hit_q, ddtc_miss_q;
 
 logic dc_loaded_with_error, dc_loaded_with_error_captured;
-logic dc_with_data_corruption, dc_with_data_corruption_captured;
+logic dc_pc_with_data_corruption, dc_pc_with_data_corruption_captured;
 
 assign dc_loaded_with_error = pdtv_zero_captured || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
-assign dc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
+assign dc_pc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
         dc_loaded_with_error_captured         <= 0;
-        dc_with_data_corruption_captured    <= 0;
+        dc_pc_with_data_corruption_captured    <= 0;
     end
         
     else if(translation_req.ar_hsk || translation_req.aw_hsk) begin
         dc_loaded_with_error_captured         <= 0;
-        dc_with_data_corruption_captured    <= 0;
+        dc_pc_with_data_corruption_captured    <= 0;
     end
         
     else begin
         dc_loaded_with_error_captured         <= dc_loaded_with_error_captured || dc_loaded_with_error;
-        dc_with_data_corruption_captured    <= dc_with_data_corruption_captured || dc_with_data_corruption;
+        dc_pc_with_data_corruption_captured    <= dc_pc_with_data_corruption_captured || dc_pc_with_data_corruption;
     end
         
 end
@@ -526,8 +526,20 @@ always @(posedge clk_i or negedge rst_ni)
 
 logic pc_ta_active, pc_fsc_active;
 
-assign pc_ta_active = dc_ended_captured && counter_pc == 0 && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
+assign pc_ta_active = dc_ended_captured && (counter_pc == 0 && (dc_q.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3) || (counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2)))) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
 assign pc_fsc_active = counter_pc == 1 && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
+
+rv_iommu::pc_ta_t pc_ta_q;
+rv_iommu::fsc_t   pc_fsc_q;
+
+assign pc_ta_q  = pc_ta_active  ? ds_resp_i.r.data : 0;
+assign pc_fsc_q = pc_fsc_active ? ds_resp_i.r.data : 0;
+
+logic ready_to_capt_pc_not_valid, pc_not_valid_captured;
+assign ready_to_capt_pc_not_valid = pc_ta_active && !pc_ta_q.v && !pc_not_valid_captured;
+
+logic ready_to_capt_pc_misconfig, pc_misconfig_captured;
+assign ready_to_capt_pc_misconfig = !ready_to_capt_pc_not_valid && !pc_not_valid_captured && ((pc_ta_active && (|pc_ta_q.reserved_1 || |pc_ta_q.reserved_2)) || (pc_fsc_active && (!(pc_fsc_q.mode == 0 || pc_fsc_q.mode == 8) || |pc_fsc_q.reserved))) && !pc_misconfig_captured;
 
 logic ready_to_capt_pdte_not_valid, pdte_not_valid_captured;
 assign ready_to_capt_pdte_not_valid = !ds_resp_i.r.data[0] && pdte_accessed;
@@ -545,11 +557,25 @@ always @(posedge clk_i or negedge rst_ni)
     end
     else if(ds_resp_i.r.last && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) begin
         pdte_misconfig_captured   <= 0;        
-        pdte_not_valid_captured   <= 0;        
+        pdte_not_valid_captured   <= 0;  
     end
     else begin
         pdte_misconfig_captured    <= pdte_misconfig_captured || ready_to_capt_pdte_misconfig;
         pdte_not_valid_captured    <= pdte_not_valid_captured || ready_to_capt_pdte_not_valid;
+    end
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni) begin
+        pc_not_valid_captured <= 0;
+        pc_misconfig_captured <= 0;
+    end
+    else if(aw_or_ar_hsk) begin
+        pc_not_valid_captured <= 0;
+        pc_misconfig_captured <= 0;        
+    end
+    else begin
+        pc_not_valid_captured <= pc_not_valid_captured || ready_to_capt_pc_not_valid;
+        pc_misconfig_captured <= pc_misconfig_captured || ready_to_capt_pc_misconfig;
     end
 
 assrt_23_pdte_not_valid:
@@ -557,6 +583,13 @@ assert property (ready_to_capt_pdte_not_valid |=> riscv_iommu.trans_error && ris
 
 assrt_24_pdte_misconfig:
 assert property (ready_to_capt_pdte_misconfig |=> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_MISCONFIGURED);
+
+assrt_25_pc_not_valid:
+assert property (pc_not_valid_captured && wo_data_corruption && last_beat_cdw |-> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_INVALID);
+
+assrt_26_pc_misconfig:
+assert property (pc_misconfig_captured && wo_data_corruption && last_beat_cdw |-> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_MISCONFIGURED);
+
 //----------------------------Process directory checks Ended--------------------------------
 
 
@@ -566,10 +599,7 @@ assert property (ready_to_capt_pdte_misconfig |=> riscv_iommu.trans_error && ris
 
 rv_iommu::dc_base_t dc_q;
 
-// assmp1_ptw_dc:
-// assume property ($stable(dc_q));
-
-always @(posedge clk_i or negedge rst_ni) begin
+always @(posedge clk_i or negedge rst_ni)
         if(!rst_ni)
             dc_q <= 0;
 
@@ -587,7 +617,21 @@ always @(posedge clk_i or negedge rst_ni) begin
         
         else
             dc_q <= dc_q;
-end
+
+
+rv_iommu::pc_t pc_q;
+always @(posedge clk_i or negedge rst_ni)
+        if(!rst_ni)
+            pc_q <= 0;
+
+        else if(pc_ta_active)
+            pc_q.ta <= pc_ta_q;
+
+        else if(pc_fsc_active)
+            pc_q.fsc <= pc_fsc_q;
+        
+        else
+            pc_q <= pc_q;
 
 logic pte_active;
 assign pte_active = (ds_resp_i.r.id == 0 && ds_resp_i.r_valid);
