@@ -231,4 +231,6 @@ module axi_ds_tr_compl #(
     assume property (axi_ds_tr_compl_i.r_valid |-> read_counter > 1);
 // rvalid must come after aw_hsk ended
 
+cov_hsk_check:
+cover property (ar_hsk_trnsl_compl || aw_hsk_trnsl_compl);
 endmodule

@@ -36,7 +36,7 @@ module tr_req_if #(
 
 localparam DATA_WIDTH_in_bytes = lint_wrapper::DataWidth / 8;
 
-// Handshakes of all 5 channels 
+// Handshakes of all 5 channels
 logic ar_hsk, aw_hsk, w_hsk, b_hsk, r_hsk;
 
 // address read channel
