@@ -224,23 +224,28 @@ logic ddtc_hit_q, ddtc_miss_q;
 logic dc_loaded_with_error, dc_loaded_with_error_captured;
 logic dc_pc_with_data_corruption, dc_pc_with_data_corruption_captured;
 
+
+// didn't included ready_to_capt_valid_type_disalow because dc_loaded_with_error only make sure
+// that dc can be store in cache but if ready_to_capt_valid_type_disalow is true, still we can store the dc in ddtc cache
 assign dc_loaded_with_error = (ar_did_wider || aw_did_wider) || pdtv_zero_captured || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured || dc_data_corruption_captured || dc_misconfig_captured;
 assign dc_pc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
+logic valid_type_disalow_captured, su_visor_not_allowed_captured;
 
 always @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni) begin
+    if(!rst_ni || aw_or_ar_hsk) begin
         dc_loaded_with_error_captured         <= 0;
         dc_pc_with_data_corruption_captured   <= 0;
-    end
-        
-    else if(translation_req.ar_hsk || translation_req.aw_hsk) begin
-        dc_loaded_with_error_captured         <= 0;
-        dc_pc_with_data_corruption_captured   <= 0;
+        valid_type_disalow_captured           <= 0;
+        pc_loaded_with_error_captured         <= 0;
+        su_visor_not_allowed_captured         <= 0;
     end
         
     else begin
         dc_loaded_with_error_captured         <= dc_loaded_with_error_captured || dc_loaded_with_error;
         dc_pc_with_data_corruption_captured   <= dc_pc_with_data_corruption_captured || dc_pc_with_data_corruption;
+        valid_type_disalow_captured           <= valid_type_disalow_captured || ready_to_capt_valid_type_disalow;
+        pc_loaded_with_error_captured         <= pc_loaded_with_error_captured || pc_loaded_with_error;
+        su_visor_not_allowed_captured         <= su_visor_not_allowed_captured || su_visor_not_allowed;
     end
 end
 
@@ -376,10 +381,10 @@ always @(posedge clk_i or negedge rst_ni) begin
 end
 
 logic [19:0] pdtc_pid [PDTC_ENTRIES - 1 : 0];
-logic [23:0] pdtc_did [DDTC_ENTRIES - 1 : 0];
-logic pdtc_sum [DDTC_ENTRIES -1 : 0];
-logic [3:0] pdtc_fsc_mode [DDTC_ENTRIES -1 : 0];
-
+logic [23:0] pdtc_did [PDTC_ENTRIES - 1 : 0];
+logic pdtc_sum [PDTC_ENTRIES - 1 : 0];
+logic [3:0] pdtc_fsc_mode [PDTC_ENTRIES - 1 : 0];
+logic pdtc_ens [PDTC_ENTRIES - 1 : 0];
 logic pdtc_entry_valid [PDTC_ENTRIES - 1 : 0];
 
 always @(posedge clk_i or negedge rst_ni) begin
@@ -391,9 +396,10 @@ always @(posedge clk_i or negedge rst_ni) begin
             pdtc_seq_detector[i]  <= 0;
             pdtc_sum[i]           <= 0;
             pdtc_fsc_mode[i]      <= 0;
+            pdtc_ens[i]           <= 0;
         end 
 
-    else if(pdtc_miss_q && counter_pc == 1 && !pc_loaded_with_error_captured && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
+    else if(pdtc_miss_q && counter_pc == 1 && wo_data_corruption && !pc_loaded_with_error_captured && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
 
         for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
             if((pdtc_seq_detector[i] == 0 || pdtc_seq_detector[i] == PDTC_ENTRIES)) begin
@@ -404,6 +410,7 @@ always @(posedge clk_i or negedge rst_ni) begin
                 pdtc_sum[i]           <= pc_q.ta.sum;
                 pdtc_fsc_mode[i]      <= pc_q.fsc.mode;
                 pdtc_entry_valid[i]   <= 1'b1;
+                pdtc_ens[i]           <= pc_q.ta.ens;
 
                 for (int j = 0; j < PDTC_ENTRIES; j++ )
                     if(!(pdtc_seq_detector[j] == 0 || pdtc_seq_detector[j] == PDTC_ENTRIES))
@@ -436,6 +443,18 @@ end
 // ............................PDTC Cache Ended-------------------------------------------------
 
 //............................IOTLB Started-------------------------------------------------
+logic pte_1s_global;
+
+always @(posedge clk_i or negedge rst_ni)
+        if(!rst_ni || aw_or_ar_hsk)
+            pte_1s_global <= 0;
+
+        else if(trans_1s_in_progress && leaf_pte)
+            pte_1s_global <= pte.g;
+        
+        else
+            pte_1s_global <= pte_1s_global;
+
 
 logic [$clog2(IOTLB_ENTRIES) : 0] IOTLB_seq_detector [IOTLB_ENTRIES - 1 : 0];
 
@@ -465,15 +484,31 @@ logic IOTLB_hit_q, IOTLB_miss_q;
 //     end
 // end
 
-// logic correct_did;
-// assign correct_did = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && (riscv_iommu.ddtp.iommu_mode.q == 4 ||(riscv_iommu.ddtp.iommu_mode.q == 2 && |selected_did[23:6] == 0) || (riscv_iommu.ddtp.iommu_mode.q == 3 && |selected_did[23:15] == 0));
+logic [IOTLB_ENTRIES - 1 : 0] match_tlb_tag, match_stages, match_gscid, match_pscid, match_addrs_1s, match_addrs_2s;
+logic [10:0] vpn2;
+logic [8:0] vpn1, vpn0;
 
-// generate
-// for (genvar i  = 0; i < IOTLB_ENTRIES; i++ ) begin
-// assign IOTLB_hit_n[i]  = !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && ddtc_entry_valid[i] && selected_did == ddtc_entry[i] && !ddtc_miss_q;
-// assign IOTLB_miss_n[i] = !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && (selected_did != ddtc_entry[i] || !ddtc_entry_valid[i]);
-// end
-// endgenerate
+assign vpn2 = selected_addr[40:30];
+assign vpn1 = selected_addr[29:21];
+assign vpn0 = selected_addr[20:12];
+
+logic pc_dc_loaded;
+assign pc_dc_loaded = wo_data_corruption && !valid_type_disalow_captured && !su_visor_not_allowed_captured && !ready_to_capt_valid_type_disalow && (!pc_loaded_with_error_captured && (pc_ended_captured || pdtc_hit_q || !pdtv_enable || !InclPC)) && (!dc_loaded_with_error_captured && (ddtc_hit_q || dc_ended_captured));
+
+generate
+for (genvar i  = 0; i < IOTLB_ENTRIES; i++ ) begin
+assign match_stages[i]   = stage1_enable == IOTLB_en_1s[i] && stage2_enable == IOTLB_en_2s[i];
+assign match_gscid[i]    = stage2_enable && IOTLB_gscid[i] == gscid;
+assign match_pscid[i]    = (stage1_enable && (IOTLB_pscid[i] == pscid || IOTLB_pte_global[i])) || !stage1_enable;
+assign match_addrs_1s[i] = stage1_enable && (IOTLB_is_1G_1s[i] || (IOTLB_VPN[i][17:9] == vpn1 && (IOTLB_is_2m_1s[i] || IOTLB_VPN[i][8:0] == vpn0)));
+assign match_addrs_2s[i] = !stage1_enable && stage2_enable && (IOTLB_is_1G_2s[i] || (IOTLB_VPN[i][17:9] == vpn1 && (IOTLB_is_2m_2s[i] || IOTLB_VPN[i][8:0] == vpn0)));
+
+assign match_tlb_tag[i]  = (match_addrs_1s[i] || match_addrs_2s[i]) && IOTLB_VPN_valid[i] && IOTLB_VPN[i][28:18] == vpn2 && match_stages[i] && match_gscid[i] && match_pscid[i];
+
+assign IOTLB_hit_n[i]   = pc_dc_loaded && !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && match_tlb_tag[i];
+assign IOTLB_miss_n[i]  = (stage1_enable || stage2_enable) && pc_dc_loaded && !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && !match_tlb_tag[i];
+end
+endgenerate
 
 
 always @(posedge clk_i or negedge rst_ni) begin
@@ -488,70 +523,82 @@ always @(posedge clk_i or negedge rst_ni) begin
         IOTLB_miss_q <= 0;
         end
         else begin
-        // IOTLB_hit_q  <= IOTLB_hit_q  || (IOTLB_hit_n != 0);
-        // IOTLB_miss_q <= IOTLB_miss_q || IOTLB_miss_n == 8'hff;
+        IOTLB_hit_q  <= IOTLB_hit_q  || (IOTLB_hit_n != 0);
+        IOTLB_miss_q <= IOTLB_miss_q || IOTLB_miss_n == {IOTLB_ENTRIES{1'b1}};
         end
     end
 end
 
-logic [riscv::VLEN-1:0] IOTLB_VPN [IOTLB_ENTRIES - 1 : 0];
+logic [28:0] IOTLB_VPN [IOTLB_ENTRIES - 1 : 0];
 logic IOTLB_VPN_valid [IOTLB_ENTRIES - 1 : 0];
 
-logic en_1s [IOTLB_ENTRIES - 1 : 0];
-logic en_2s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_en_1s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_en_2s [IOTLB_ENTRIES - 1 : 0];
 
-logic is_2m_1s [IOTLB_ENTRIES - 1 : 0];
-logic is_2m_2s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_is_2m_1s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_is_2m_2s [IOTLB_ENTRIES - 1 : 0];
 
-logic is_1G_1s [IOTLB_ENTRIES - 1 : 0];
-logic is_1G_2s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_is_1G_1s [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_is_1G_2s [IOTLB_ENTRIES - 1 : 0];
 
-logic is_msi [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_is_msi [IOTLB_ENTRIES - 1 : 0];
 
 logic [19:0] IOTLB_pscid [IOTLB_ENTRIES - 1 : 0];
 logic [15:0] IOTLB_gscid [IOTLB_ENTRIES - 1 : 0];
+logic IOTLB_pte_global   [IOTLB_ENTRIES - 1 : 0];
+
+logic [15:0] gscid;
+assign gscid = $rose(ddtc_hit_q) ? ddtc_gscid[hit_index] : dc_q.iohgatp.gscid;
+
+logic [19:0] pscid; 
+assign pscid = $rose(ddtc_hit_q) ? ddtc_pscid[hit_index] : dc_q.ta.pscid;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
-        for (int i = 0; i < IOTLB_VPN_ENTRIES; i++ ) begin
+        for (int i = 0; i < IOTLB_ENTRIES; i++ ) begin
             IOTLB_VPN[i]           <= 0;
-            IOTLB_valid[i]         <= 0;
+            IOTLB_VPN_valid[i]     <= 0;
             IOTLB_seq_detector[i]  <= 0;  
 
             IOTLB_pscid[i]         <= 0; 
             IOTLB_gscid[i]         <= 0;
 
-            en_1s[i]               <= 0;
-            en_2s[i]               <= 0;
+            IOTLB_pte_global[i]    <= 0;
 
-            is_2m_1s[i]            <= 0;
-            is_2m_2s[i]            <= 0;
+            IOTLB_en_1s[i]         <= 0;
+            IOTLB_en_2s[i]         <= 0;
 
-            is_1G_1s[i]            <= 0;
-            is_1G_2s[i]            <= 0;
+            IOTLB_is_2m_2s[i]      <= 0;
+            IOTLB_is_2m_1s[i]      <= 0;
 
-            is_msi[i]              <= 0;
+            IOTLB_is_1G_1s[i]      <= 0;
+            IOTLB_is_1G_2s[i]      <= 0;
+
+            IOTLB_is_msi[i]        <= 0;
 
         end
-    else if(IOTLB_miss_q && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
+
+    else if(IOTLB_miss_q && aw_or_ar_hsk) begin
 
         for (int i = 0; i < IOTLB_ENTRIES; i++ ) begin
             if((IOTLB_seq_detector[i] == 0 || IOTLB_seq_detector[i] == IOTLB_ENTRIES)) begin
                 
                 IOTLB_VPN_valid[i]     <= 1'b1;
                 IOTLB_seq_detector[i]  <= 1;
-                IOTLB_VPN[i]           <= selected_addr; // tbd
-                IOTLB_pscid[i]         <= ($rose(ddtc_hit_q) ? ddtc_pscid[hit_index] : dc_q.ta.pscid);
-                IOTLB_gscid[i]         <= ($rose(ddtc_hit_q) ? ddtc_gscid[hit_index] : dc_q.iohgatp.gscid);
+                IOTLB_VPN[i]           <= selected_addr[40:12]; 
+                IOTLB_pscid[i]         <= pscid;
+                IOTLB_gscid[i]         <= gscid;
                 
-                en_1s[i]               <= stage1_enable;
-                en_2s[i]               <= stage2_enable;
+                IOTLB_pte_global[i]    <= pte_1s_global; 
 
-                is_2m_1s[i]            <= first_s_2M;
-                is_2m_2s[i]            <= second_s_2M;
-                is_1G_1s[i]            <= first_s_1G;
-                is_1G_2s[i]            <= second_s_1G;
-                is_msi[i]              <= 0;
+                IOTLB_en_1s[i]         <= stage1_enable;
+                IOTLB_en_2s[i]         <= stage2_enable;
+
+                IOTLB_is_2m_1s[i]      <= first_s_2M;
+                IOTLB_is_2m_2s[i]      <= second_s_2M;
+                IOTLB_is_1G_1s[i]      <= first_s_1G;
+                IOTLB_is_1G_2s[i]      <= second_s_1G;
+                IOTLB_is_msi[i]        <= 0;            //tbd
 
                 for (int j = 0; j < IOTLB_ENTRIES; j++ )
                     if(!(IOTLB_seq_detector[j] == 0 || IOTLB_seq_detector[j] == IOTLB_ENTRIES))
@@ -581,8 +628,6 @@ always @(posedge clk_i or negedge rst_ni) begin
     end
 end
 
-
-
 logic ready_to_capt_first_s_2M, ready_to_capt_first_s_1G, ready_to_capt_second_s_2M, ready_to_capt_second_s_1G;
 
 assign ready_to_capt_first_s_2M  = trans_1s_in_progress && current_level == 1 && leaf_pte && !first_s_2M;
@@ -593,17 +638,16 @@ assign ready_to_capt_second_s_1G = trans_2s_in_progress && current_level == 2 &&
 logic first_s_2M, first_s_1G, second_s_2M, second_s_1G;
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni || aw_or_ar_hsk) begin
-
-        first_s_2M[i]  <= 0;
-        second_s_2M[i] <= 0;
-        first_s_1G[i]  <= 0;
-        second_s_1G[i] <= 0;
+        first_s_2M  <= 0;
+        second_s_2M <= 0;
+        first_s_1G  <= 0;
+        second_s_1G <= 0;
     end
     else begin
-        first_s_2M[i]  <= first_s_2M  || ready_to_capt_first_s_2M;
-        second_s_2M[i] <= second_s_2M || ready_to_capt_second_s_2M;
-        first_s_1G[i]  <= first_s_1G  || ready_to_capt_first_s_1G;
-        second_s_1G[i] <= second_s_1G || ready_to_capt_second_s_1G;
+        first_s_2M  <= first_s_2M  || ready_to_capt_first_s_2M;
+        second_s_2M <= second_s_2M || ready_to_capt_second_s_2M;
+        first_s_1G  <= first_s_1G  || ready_to_capt_first_s_1G;
+        second_s_1G <= second_s_1G || ready_to_capt_second_s_1G;
     end
 end
 
@@ -612,10 +656,9 @@ end
 // ----------------------------Process to tranlsate an IOVA checks started----------------------
 
 logic ready_to_capt_valid_type_disalow, valid_pv_pdtv_zero_captured;
-assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_captured && wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss_q && dc_ended_captured && (!dc_q.tc.pdtv)) || (ddtc_hit_q && !ddtc_pdtv[hit_index]))));
-
+assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_captured && ((selected_pv && ddtc_hit_q && !ddtc_pdtv[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss_q && (dc_ended_captured || ready_to_capt_dc_ended) && !dc_q.tc.pdtv))))));
 logic su_visor_not_allowed;
-assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_captured && wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && pc_ta_q.ens && priv_transac);
+assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_captured && ((pdtc_hit_q && priv_transac && !pdtc_ens[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && !pc_ta_q.ens && priv_transac)));
 
 logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
 assign pid_wider_when_cache_miss = ddtc_miss_q && dc_ended_captured && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
@@ -659,17 +702,19 @@ always @(posedge clk_i or negedge rst_ni)
         else
             pc_q <= pc_q;
 
-logic ready_to_capt_dc_ended, dc_ended_captured;
+logic ready_to_capt_dc_ended, dc_ended_captured, ready_to_capt_pc_ended, pc_ended_captured;
 assign ready_to_capt_dc_ended = (counter_dc == 3) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw && !dc_ended_captured;
+assign ready_to_capt_pc_ended = pc_fsc_active && data_strcuture.r_hsk_trnsl_compl && !pc_ended_captured && !pc_loaded_with_error && !pc_loaded_with_error_captured;
 
 always @(posedge clk_i or negedge rst_ni)
-    if(!rst_ni)
+    if(!rst_ni || aw_or_ar_hsk) begin
         dc_ended_captured <= 0;
-    else if(aw_or_ar_hsk)
-        dc_ended_captured <= 0;
-    else
+        pc_ended_captured <= 0;
+    end
+    else begin
         dc_ended_captured <= dc_ended_captured || ready_to_capt_dc_ended;
-
+        pc_ended_captured <= pc_ended_captured || ready_to_capt_pc_ended;
+    end
 
 logic [1:0] counter_non_leaf_pc;
 logic counter_pc;
@@ -758,16 +803,6 @@ always @(posedge clk_i or negedge rst_ni)
 
 logic pc_loaded_with_error, pc_loaded_with_error_captured;
 assign pc_loaded_with_error = ready_to_capt_pdte_not_valid || ready_to_capt_pdte_misconfig || ready_to_capt_pc_not_valid || ready_to_capt_pc_misconfig;
-
-always @(posedge clk_i or negedge rst_ni)
-    if(!rst_ni)
-        pc_loaded_with_error_captured   <= 0;
-        
-    else if(translation_req.ar_hsk || translation_req.aw_hsk) 
-        pc_loaded_with_error_captured   <= 0;
-        
-    else 
-        pc_loaded_with_error_captured   <= pc_loaded_with_error_captured || pc_loaded_with_error;
 
 
 
@@ -1126,6 +1161,18 @@ assert property ($rose(guest_pf_captured_due_to_G_bit) && aw_seen_before |-> ris
 
 assrt_56_guest_pf_exception_due_to_g_cause_code_2:
 assert property ($rose(guest_pf_captured_due_to_G_bit) && !aw_seen_before |-> riscv_iommu.cause_code == rv_iommu::LOAD_GUEST_PAGE_FAULT);
+
+assrt_57_pdt_walk: // if data is not present, there will be pdt_walk
+assert property ($rose(IOTLB_miss_q) |=> riscv_iommu.s1_ptw || riscv_iommu.s2_ptw);
+
+assrt_58_iotlb_miss: // if data is not present, there will be pdt_walk
+assert property ($rose(IOTLB_miss_q) |-> riscv_iommu.iotlb_miss);
+
+assrt_59_iotlb_hit: // if data is not present, there will be pdt_walk
+assert property ($rose(IOTLB_hit_q) |-> !riscv_iommu.iotlb_miss);
+
+assrt_60_pdt_walk: // if data is not present, there will be pdt_walk
+assert property ($rose(IOTLB_hit_q) |=> !(riscv_iommu.s1_ptw || riscv_iommu.s2_ptw));
 //----------------------------- Assertion Ended----------------------------------------
 
 
@@ -1175,4 +1222,7 @@ cover property (selected_pv && stage1_enable && stage2_enable && riscv_iommu.tra
 
 cover_15_both_stages_wo_pc:
 cover property (stage1_enable && stage2_enable && riscv_iommu.trans_valid);
+
+cover_16_tlb_hit:
+cover property (stage1_enable && stage2_enable && i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.i_rv_iommu_iotlb_sv39x4.lu_hit_o);
 //-----------------------------Cover CDW Ended---------------------------------------------
