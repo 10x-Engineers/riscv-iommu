@@ -498,12 +498,12 @@ assign pc_dc_loaded = wo_data_corruption && !valid_type_disalow_captured && !su_
 generate
 for (genvar i  = 0; i < IOTLB_ENTRIES; i++ ) begin
 assign match_stages[i]   = stage1_enable == IOTLB_en_1s[i] && stage2_enable == IOTLB_en_2s[i];
-assign match_gscid[i]    = stage2_enable && IOTLB_gscid[i] == gscid;
+assign match_gscid[i]    = (stage2_enable && IOTLB_gscid[i] == gscid) || !stage2_enable;
 assign match_pscid[i]    = (stage1_enable && (IOTLB_pscid[i] == pscid || IOTLB_pte_global[i])) || !stage1_enable;
 assign match_addrs_1s[i] = stage1_enable && (IOTLB_is_1G_1s[i] || (IOTLB_VPN[i][17:9] == vpn1 && (IOTLB_is_2m_1s[i] || IOTLB_VPN[i][8:0] == vpn0)));
 assign match_addrs_2s[i] = !stage1_enable && stage2_enable && (IOTLB_is_1G_2s[i] || (IOTLB_VPN[i][17:9] == vpn1 && (IOTLB_is_2m_2s[i] || IOTLB_VPN[i][8:0] == vpn0)));
 
-assign match_tlb_tag[i]  = (match_addrs_1s[i] || match_addrs_2s[i]) && IOTLB_VPN_valid[i] && IOTLB_VPN[i][28:18] == vpn2 && match_stages[i] && match_gscid[i] && match_pscid[i];
+assign match_tlb_tag[i]  = (match_addrs_1s[i] || match_addrs_2s[i]) && IOTLB_VPN_valid[i] && (stage1_enable ? IOTLB_VPN[i][26:18] == vpn2[8:0] : IOTLB_VPN[i][28:18] == vpn2) && match_stages[i] && match_gscid[i] && match_pscid[i];
 
 assign IOTLB_hit_n[i]   = pc_dc_loaded && !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && match_tlb_tag[i];
 assign IOTLB_miss_n[i]  = (stage1_enable || stage2_enable) && pc_dc_loaded && !translation_req.aw_hsk && !translation_req.ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && !match_tlb_tag[i];
@@ -578,7 +578,7 @@ always @(posedge clk_i or negedge rst_ni) begin
 
         end
 
-    else if(IOTLB_miss_q && aw_or_ar_hsk) begin
+    else if(IOTLB_miss_q && !with_error_pte && !with_error_pte_loaded && aw_or_ar_hsk) begin
 
         for (int i = 0; i < IOTLB_ENTRIES; i++ ) begin
             if((IOTLB_seq_detector[i] == 0 || IOTLB_seq_detector[i] == IOTLB_ENTRIES)) begin
@@ -814,11 +814,19 @@ assign pc_loaded_with_error = ready_to_capt_pdte_not_valid || ready_to_capt_pdte
 logic pte_active;
 assign pte_active = (ds_resp_i.r.id == 0 && ds_resp_i.r_valid);
 
+logic [43:0] pte_1s_ppn;
+always @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni || aw_or_ar_hsk)
+        pte_1s_ppn <= 0;
+    else if(trans_1s_in_progress && leaf_pte)
+        pte_1s_ppn <= pte.ppn;
+end
+
 riscv::pte_t pte;
 assign pte = pte_active ? ds_resp_i.r.data : 0;
 
 logic ready_to_capt_pf_excep, pf_excep_captured;
-assign ready_to_capt_pf_excep = !ready_to_capt_data_corrup_ptw && pte_active && (!pte.v || (!pte.r && pte.w) || |pte.reserved);
+assign ready_to_capt_pf_excep = !ready_to_capt_data_corrup_ptw && pte_active && (!pte.v || (!pte.r && pte.w) || |pte.reserved || (leaf_pte ? !pte.r: (pte.a || pte.d || pte.u)));
 
 logic ready_to_capt_guest_pf_due_to_u_bit, guest_pf_captured_due_to_u_bit;
 assign ready_to_capt_guest_pf_due_to_u_bit = !ready_to_capt_data_corrup_ptw && pte_active && trans_2s_in_progress && !pte.u && (pte.r || pte.x) && !guest_pf_captured_due_to_u_bit;
@@ -837,6 +845,9 @@ assign ready_to_capt_data_corrup_ptw = pte_active && ds_resp_i.r.id == 0 && ds_r
 
 logic ready_to_capt_misaligned_super_page;
 assign ready_to_capt_misaligned_super_page = (!ready_to_capt_pf_excep && !ready_to_capt_data_corrup_ptw && (pte.r || pte.x)) && (current_level == 2 ? |pte[27 : 10] : (current_level == 1 ? |pte[18 : 10] : 0));
+
+logic guest_pf_63_41_high_39x4;
+assign guest_pf_63_41_high_39x4 = (trans_1s_completed && $rose(trans_2s_in_progress) && |pte_1s_ppn[43:29]) || (!stage1_enable && stage2_enable && $rose(trans_2s_in_progress) && |selected_addr[63:41]);
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
@@ -865,8 +876,8 @@ always @(posedge clk_i or negedge rst_ni) begin
     end
 end
 
-logic wo_error_pte;
-assign wo_error_pte = !ready_to_capt_misaligned_super_page && !ready_to_capt_dirty_low && !ready_to_capt_accessed_low && !ready_to_capt_data_corrup_ptw && !ready_to_capt_pf_excep;
+logic with_error_pte, with_error_pte_loaded;
+assign with_error_pte = guest_pf_63_41_high_39x4 || ready_to_capt_guest_pf_due_to_u_bit || ready_to_capt_guest_pf_due_to_G_bit || ready_to_capt_misaligned_super_page || ready_to_capt_dirty_low || ready_to_capt_accessed_low || ready_to_capt_data_corrup_ptw || ready_to_capt_pf_excep;
 
 logic [2:0] counter_PTE;
 
@@ -875,7 +886,7 @@ always @(posedge clk_i or negedge rst_ni) begin
         counter_PTE <= 0;
     else if(aw_or_ar_hsk)
         counter_PTE <= 0;
-    else if(wo_error_pte && pte_active && (pte.r || pte.x))
+    else if(!with_error_pte && pte_active && (pte.r || pte.x))
         counter_PTE <= counter_PTE + 1;
 end
 
@@ -923,7 +934,7 @@ logic implicit_access;
 assign implicit_access = (ddtc_hit_q && stage2_enable && ddtc_pdtv[hit_index]) || (ddtc_miss_q && stage2_enable && dc_q.tc.pdtv);
 
 logic trans_iosatp_in_progress, iosatp_trans_completed;
-assign trans_iosatp_in_progress  = (implicit_access ? counter_PTE == 1 : counter_PTE == 0) && stage2_enable && pte_active && !iosatp_trans_completed;
+assign trans_iosatp_in_progress  = (implicit_access ? counter_PTE == 1 : counter_PTE == 0) && stage1_enable && stage2_enable && pte_active && !iosatp_trans_completed;
 
 logic trans_pdtp_in_progress, pdtp_translated;
 assign trans_pdtp_in_progress = implicit_access && counter_PTE == 0 && pte_active && !pdtp_translated;
@@ -934,7 +945,7 @@ assign with_second_stage = (!implicit_access && stage2_enable && iosatp_trans_co
 logic trans_1s_in_progress, trans_1s_completed, trans_2s_in_progress, trans_2s_completed;
 assign trans_1s_in_progress = stage1_enable && with_second_stage && pte_active && !trans_1s_completed;
 
-assign trans_2s_in_progress = stage2_enable && (stage1_enable ? (trans_1s_completed && (implicit_access ? (iosatp_trans_completed && pdtp_translated) : iosatp_trans_completed)) : (implicit_access && pdtp_translated)) && pte_active && !trans_2s_completed;
+assign trans_2s_in_progress = stage2_enable && (stage1_enable ? (trans_1s_completed && (implicit_access ? (iosatp_trans_completed && pdtp_translated) : iosatp_trans_completed)) : ((implicit_access && pdtp_translated) || (!InclPC || !pdtv_enable ))) && pte_active && !trans_2s_completed;
 
 logic trans_completed;
 assign trans_completed = stage2_enable ? (trans_2s_in_progress && (pte.r || pte.x)) : (stage1_enable && (trans_1s_in_progress));
@@ -943,23 +954,19 @@ logic leaf_pte;
 assign leaf_pte = !ready_to_capt_data_corrup_ptw && (pte.r || pte.x);
 
 always @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni) begin
+    if(!rst_ni || aw_or_ar_hsk) begin
         iosatp_trans_completed  <= 0;
         pdtp_translated         <= 0;
         trans_1s_completed      <= 0;
         trans_2s_completed      <= 0;
-    end
-    else if(aw_or_ar_hsk) begin
-        iosatp_trans_completed  <= 0;
-        pdtp_translated         <= 0;
-        trans_1s_completed      <= 0;
-        trans_2s_completed      <= 0;
+        with_error_pte_loaded   <= 0;
     end
     else begin
         iosatp_trans_completed  <= iosatp_trans_completed || (trans_iosatp_in_progress && leaf_pte);
         pdtp_translated         <= pdtp_translated        || (trans_pdtp_in_progress   && leaf_pte);
         trans_1s_completed      <= trans_1s_completed     || (trans_1s_in_progress     && leaf_pte);
         trans_2s_completed      <= trans_2s_completed     || (trans_2s_in_progress     && leaf_pte);
+        with_error_pte_loaded   <= with_error_pte         || with_error_pte_loaded;
     end
 end
 
@@ -1162,17 +1169,24 @@ assert property ($rose(guest_pf_captured_due_to_G_bit) && aw_seen_before |-> ris
 assrt_56_guest_pf_exception_due_to_g_cause_code_2:
 assert property ($rose(guest_pf_captured_due_to_G_bit) && !aw_seen_before |-> riscv_iommu.cause_code == rv_iommu::LOAD_GUEST_PAGE_FAULT);
 
-assrt_57_pdt_walk: // if data is not present, there will be pdt_walk
+assrt_57_ptw_walk: // if data is not present, there will be ptw
 assert property ($rose(IOTLB_miss_q) |=> riscv_iommu.s1_ptw || riscv_iommu.s2_ptw);
 
-assrt_58_iotlb_miss: // if data is not present, there will be pdt_walk
+assrt_58_iotlb_miss: // if data is not present, there will be iotlb miss
 assert property ($rose(IOTLB_miss_q) |-> riscv_iommu.iotlb_miss);
 
-assrt_59_iotlb_hit: // if data is not present, there will be pdt_walk
+assrt_59_iotlb_hit: // if data is not present, there will be no iotlb miss
 assert property ($rose(IOTLB_hit_q) |-> !riscv_iommu.iotlb_miss);
 
-assrt_60_pdt_walk: // if data is not present, there will be pdt_walk
+assrt_60_ptw_walk: // if data is not present, there will be no page table walk
 assert property ($rose(IOTLB_hit_q) |=> !(riscv_iommu.s1_ptw || riscv_iommu.s2_ptw));
+
+
+assrt_61_high_63_41_error: // for sv39*4 63:41 must all be 0
+assert property (guest_pf_63_41_high_39x4 |=> riscv_iommu.trans_error);
+
+assrt_62_high_63_41_causecode: // for sv39*4 63:41 must all be 0
+assert property (guest_pf_63_41_high_39x4 |=> aw_seen_before ? riscv_iommu.cause_code == rv_iommu::STORE_GUEST_PAGE_FAULT : riscv_iommu.cause_code == rv_iommu::LOAD_GUEST_PAGE_FAULT);
 //----------------------------- Assertion Ended----------------------------------------
 
 
