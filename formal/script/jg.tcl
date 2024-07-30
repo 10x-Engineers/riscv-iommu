@@ -20,9 +20,12 @@ set_engine_mode auto
 
 set_proofgrid_manager on
 
-stopat  {dbg_if_ctl ddtp.iommu_mode.q fctl flush_*}
+stopat  {dbg_if_ctl ddtp.iommu_mode.q fctl}
 
-# set_visualize_preload_signal_list /home/hayat/riscv-iommu/formal/waveform/tr_logic_wrapper.sig
+# stopat  {dbg_if_ctl ddtp.iommu_mode.q fctl flush_*}
 
-##set_visualize_show_default_signals off
+set_visualize_preload_signal_list /home/hayat/Desktop/riscv-iommu/formal/waveform/tr_logic_wrapper.sig
+
+set_visualize_show_default_signals off
+
 prove -bg -all

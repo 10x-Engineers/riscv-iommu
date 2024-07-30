@@ -12,8 +12,8 @@
 asmp1_fctl:
 assume property(!riscv_iommu.fctl.gxl && !riscv_iommu.fctl.be && !riscv_iommu.fctl.wsi);
 
-assmp2_zero_flush: // for now on we are not looking into cache so assume flush is 0
-assume property (!riscv_iommu.flush_ddtc && !riscv_iommu.flush_pdtc && !riscv_iommu.flush_vma && !riscv_iommu.flush_vma && !riscv_iommu.flush_gvma);
+// assmp2_zero_flush: // for now on we are not looking into cache so assume flush is 0
+// assume property (!riscv_iommu.flush_ddtc && !riscv_iommu.flush_pdtc && !riscv_iommu.flush_vma && !riscv_iommu.flush_vma && !riscv_iommu.flush_gvma);
 
 assmp3_debug_0: // as debug mode is not supported so this is tied to 0
 assume property (!riscv_iommu.dbg_if_ctl);
