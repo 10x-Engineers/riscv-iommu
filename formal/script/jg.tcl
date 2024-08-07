@@ -11,6 +11,8 @@ analyze -sv09 $lab_path/bind/iommu_bind.sv \
 
 elaborate  -top $design_top -disable_auto_bbox -create_related_covers {precondition witness}
 
+check_cov -init -type all -model all
+
 clock clk_i
 reset ~rst_ni
 

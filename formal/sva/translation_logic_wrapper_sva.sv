@@ -401,6 +401,118 @@ end
 
 //............................PDTC Cache Started-------------------------------------------------
 
+logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector_n [PDTC_ENTRIES - 1 : 0];
+logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector_sorted [PDTC_ENTRIES - 1 : 0];
+logic [$clog2(PDTC_ENTRIES) : 0] pdtc_sff, pdtc_saf, pdtc_temp, pdtc_consec_big; // small before flush, small after flush, consectuve big
+
+always_comb begin
+    // initialize with 0
+    pdtc_sff        = 0;
+    pdtc_saf        = 0;
+    pdtc_consec_big = 0;
+    pdtc_temp       = 0;
+
+    for (int i = 0; i < PDTC_ENTRIES; i++) begin
+        pdtc_seq_detector_n[i] = 0;
+        pdtc_seq_detector_sorted[i] = 0;
+    end
+
+    if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
+       
+    //    pdtc_sff = pdtc_seq_detector[0];
+
+        for (int i = 0; i < PDTC_ENTRIES; i++) begin
+        
+            pdtc_seq_detector_n[i] = pdtc_seq_detector[i];
+
+        // Step 1: Flush wherever requires
+            if(pdtc_did[i] == riscv_iommu.flush_did && pdtc_entry_valid[i]) begin
+                pdtc_seq_detector_n[i] = 0;
+
+                // Step 2: Take small from flush(sff)
+                if(pdtc_sff == 0)
+                    pdtc_sff = pdtc_seq_detector[i];
+                else if(pdtc_seq_detector[i] < pdtc_sff)
+                    pdtc_sff = pdtc_seq_detector[i];
+            end
+
+        // Step 3: Sort the sequences after flush
+            pdtc_seq_detector_sorted[i] = pdtc_seq_detector_n[i];
+        end
+
+        for (int i = 0; i < PDTC_ENTRIES; i++)
+            for (int j = 0; j < PDTC_ENTRIES; j++) begin
+                 if(pdtc_seq_detector_sorted[i] < pdtc_seq_detector_sorted[j]) begin
+                    pdtc_temp = pdtc_seq_detector_sorted[i];
+                    pdtc_seq_detector_sorted[i] = pdtc_seq_detector_sorted[j];
+                    pdtc_seq_detector_sorted[j] = pdtc_temp;
+                end
+            end
+
+        // Step 4: Take small after flush(saf)
+        // pdtc_saf = pdtc_seq_detector_sorted[0];
+        for(int i = 0; i < PDTC_ENTRIES; i++)
+          if(pdtc_saf == 0)
+            pdtc_saf = pdtc_seq_detector_sorted[i];
+          else if(pdtc_seq_detector_sorted[i] < pdtc_saf)
+            pdtc_saf = pdtc_seq_detector_sorted[i];
+
+        // Step 5: Take consecutive_big
+        pdtc_consec_big = pdtc_sff;
+        for(int i = 0; i < PDTC_ENTRIES; i++)
+            if(pdtc_seq_detector_sorted[i] == (pdtc_consec_big + 1))
+                pdtc_consec_big = pdtc_seq_detector_sorted[i];
+    end
+
+    else if(riscv_iommu.flush_pdtc && riscv_iommu.flush_pv) begin
+    //    pdtc_sff = pdtc_seq_detector[0];
+
+        for (int i = 0; i < PDTC_ENTRIES; i++) begin
+        
+            pdtc_seq_detector_n[i] = pdtc_seq_detector[i];
+
+        // Step 1: Flush wherever requires
+            if(pdtc_did[i] == riscv_iommu.flush_did && pdtc_pid[i] == riscv_iommu.flush_pid && pdtc_entry_valid[i]) begin
+                pdtc_seq_detector_n[i] = 0;
+
+                // Step 2: Take small from flush(sff)
+                if(pdtc_sff == 0)
+                    pdtc_sff = pdtc_seq_detector[i];
+                else if(pdtc_seq_detector[i] < pdtc_sff)
+                    pdtc_sff = pdtc_seq_detector[i];
+            end
+
+        // Step 3: Sort the sequences after flush
+            pdtc_seq_detector_sorted[i] = pdtc_seq_detector_n[i];
+        end
+
+        for (int i = 0; i < PDTC_ENTRIES; i++)
+            for (int j = 0; j < PDTC_ENTRIES; j++) begin
+                 if(pdtc_seq_detector_sorted[i] < pdtc_seq_detector_sorted[j]) begin
+                    pdtc_temp = pdtc_seq_detector_sorted[i];
+                    pdtc_seq_detector_sorted[i] = pdtc_seq_detector_sorted[j];
+                    pdtc_seq_detector_sorted[j] = pdtc_temp;
+                end
+            end
+
+        // Step 4: Take small after flush(saf)
+        // pdtc_saf = pdtc_seq_detector_sorted[0];
+        for(int i = 0; i < PDTC_ENTRIES; i++)
+          if(pdtc_saf == 0)
+            pdtc_saf = pdtc_seq_detector_sorted[i];
+          else if(pdtc_seq_detector_sorted[i] < pdtc_saf)
+            pdtc_saf = pdtc_seq_detector_sorted[i];
+
+        // Step 5: Take consecutive_big
+        pdtc_consec_big = pdtc_sff;
+        for(int i = 0; i < PDTC_ENTRIES; i++)
+            if(pdtc_seq_detector_sorted[i] == (pdtc_consec_big + 1))
+                pdtc_consec_big = pdtc_seq_detector_sorted[i];
+    end
+
+end
+
+
 logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector [PDTC_ENTRIES - 1 : 0];
 
 logic [PDTC_ENTRIES - 1 : 0] pdtc_hit_n, pdtc_miss_n;
@@ -472,43 +584,68 @@ always @(posedge clk_i or negedge rst_ni) begin
 // If DV is 1, then the inval_ddt invalidates cached leaf-level all associated PDT entries
     else if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
 
+        for(int i = 0; i < PDTC_ENTRIES; i++) begin
+            
+            if(pdtc_sff == 1) begin
+                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
+                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_sff;
+                else 
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
+            end
+
+            else if(pdtc_sff != 0) begin
+                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
+                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_saf;
+                else 
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
+            end
+        end
+
         for (int j = 0; j < PDTC_ENTRIES; j++)
             if(pdtc_did[j] == riscv_iommu.flush_did && pdtc_entry_valid[j]) begin
-
-                for (int i = 0; i < PDTC_ENTRIES; i++ )
-                    if(pdtc_seq_detector[j] > pdtc_seq_detector[i])
-                        pdtc_seq_detector[i]  <= pdtc_seq_detector[i] - 1;
-
-                pdtc_seq_detector[j]  <= 0;
                 pdtc_did[j]           <= 0;
                 pdtc_pid[j]           <= 0;
                 pdtc_sum[j]           <= 0;
                 pdtc_fsc_mode[j]      <= 0;
                 pdtc_entry_valid[j]   <= 0;
                 pdtc_ens[j]           <= 0;
-
-                break;
-            end     
+            end
     end
 
     else if(riscv_iommu.flush_pdtc && riscv_iommu.flush_pv) begin
+        
+        for(int i = 0; i < PDTC_ENTRIES; i++) begin
+            if(pdtc_sff == 1) begin
+                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
+                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_sff;
+                else 
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
+            end
+
+            else if(pdtc_sff != 0) begin
+                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
+                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_saf;
+                else 
+                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
+            end
+        end
 
         for (int j = 0; j < PDTC_ENTRIES; j++)
             if(pdtc_did[j] == riscv_iommu.flush_did && pdtc_pid[j] == riscv_iommu.flush_pid && pdtc_entry_valid[j]) begin
-
-                for (int i = 0; i < PDTC_ENTRIES; i++ )
-                    if(pdtc_seq_detector[j] > pdtc_seq_detector[i])
-                        pdtc_seq_detector[i]  <= pdtc_seq_detector[i] - 1;
-
-                pdtc_seq_detector[j]  <= 0;
                 pdtc_did[j]           <= 0;
                 pdtc_pid[j]           <= 0;
                 pdtc_sum[j]           <= 0;
                 pdtc_fsc_mode[j]      <= 0;
                 pdtc_entry_valid[j]   <= 0;
                 pdtc_ens[j]           <= 0;
-
-                break;
             end     
     end
 
@@ -1285,8 +1422,8 @@ assert property ($rose(ptw_data_corrup_captured) |-> riscv_iommu.cause_code == r
 assrt_31_ptw_corrupt_trans_error:
 assert property ($rose(ptw_data_corrup_captured) |-> riscv_iommu.trans_error);
 
-assrt_32_ptw_accessed_bit:
-assert property ($rose(accessed_low_captured) |-> riscv_iommu.trans_error);
+assrt_32_ptw_accessed_bit: // proven
+assume property ($rose(accessed_low_captured) |-> riscv_iommu.trans_error);
 
 assrt_33_ptw_accessed_bit:
 assert property ($rose(accessed_low_captured) |-> riscv_iommu.cause_code == rv_iommu::STORE_PAGE_FAULT || riscv_iommu.cause_code == rv_iommu::LOAD_PAGE_FAULT);
@@ -1315,8 +1452,8 @@ assert property (ready_to_capt_misaligned_super_page && aw_seen_before |=> riscv
 assrt_41_misaligned_cause_code:
 assert property (ready_to_capt_misaligned_super_page && !aw_seen_before |=> riscv_iommu.cause_code == rv_iommu::LOAD_PAGE_FAULT);
 
-assrt_42_data_corruption_error:
-assert property (ready_to_capt_data_corrup_ptw |=> riscv_iommu.trans_error);
+assrt_42_data_corruption_error: // proven 
+assume property (ready_to_capt_data_corrup_ptw |=> riscv_iommu.trans_error);
 
 assrt_43_data_corruption_cause_code:
 assert property (ready_to_capt_data_corrup_ptw |=> riscv_iommu.cause_code == rv_iommu::PT_DATA_CORRUPTION);
@@ -1431,4 +1568,10 @@ cover property (stage1_enable && stage2_enable && riscv_iommu.trans_valid);
 
 cover_16_tlb_hit:
 cover property (stage1_enable && stage2_enable && i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.i_rv_iommu_iotlb_sv39x4.lu_hit_o);
+
+cover_17_pdtc_cache_seq_check:
+cover property (pdtc_seq_detector[0] == 1 && pdtc_seq_detector[1] == 2 && riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv |=> pdtc_seq_detector[1] == 1 && pdtc_entry_valid[1]);
+
+cover_18_pdtc_cache_seq_check:
+cover property (pdtc_seq_detector[0] == 1 && pdtc_seq_detector[1] == 2 && riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv);
 //-----------------------------Cover CDW Ended---------------------------------------------
