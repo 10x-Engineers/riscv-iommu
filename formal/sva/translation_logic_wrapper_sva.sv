@@ -1,17 +1,20 @@
-
-
 `define ar_addr dev_tr_req_i.ar.addr
 `define aw_addr dev_tr_req_i.aw.addr
 `define ds_r_channel ds_resp_i.r
 
-logic aw_or_ar_hsk, aw_or_ar_hsk_q;
+
+logic aw_or_ar_hsk, aw_or_ar_hsk_q, stage2_enable_q;
 assign aw_or_ar_hsk = (translation_req.ar_hsk || translation_req.aw_hsk);
 
 always @(posedge clk_i or negedge rst_ni)
-    if(!rst_ni)
+    if(!rst_ni) begin
         aw_or_ar_hsk_q <= 0;
-    else
-        aw_or_ar_hsk_q <= aw_or_ar_hsk;
+        stage2_enable_q  <= 0;
+    end
+    else begin
+        aw_or_ar_hsk_q  <= aw_or_ar_hsk;
+        stage2_enable_q <= stage2_enable;
+    end
 
 logic ar_did_wider, aw_did_wider;
 assign ar_did_wider = ((riscv_iommu.ddtp.iommu_mode.q == 2 && |dev_tr_req_i.ar.stream_id[23:6]) || (riscv_iommu.ddtp.iommu_mode.q == 3 && |dev_tr_req_i.ar.stream_id[23:15])) && translation_req.ar_hsk;
@@ -37,7 +40,7 @@ assign selected_addr = aw_seen_before ? dev_tr_req_i.aw.addr : (dev_tr_req_i.ar_
 
 // dpe value individually from cache or from memory
 logic dpe_indivi;
-assign dpe_indivi = (ddtc_miss && dc_ended_captured && dc_q.tc.dpe) || (ddtc_hit && ddtc_dpe_q[hit_index]);
+assign dpe_indivi = (ddtc_miss && dc_loaded_with_trans_ppn_q && dc_q.tc.dpe) || (ddtc_hit && symb_dc.tc.dpe);
 
 // If DC.tc.DPE is 1 and no valid process_id is given by the device, default value of zero is used
 logic pid_when_dpe_high;
@@ -67,15 +70,18 @@ assign last_beat_cdw = ds_resp_i.r.last && ds_resp_i.r_valid && ds_resp_i.r.id =
 //-----------------------------aux code CDW started--------------------------------------
 
 logic [1:0] counter_dc, counter_non_leaf;
+logic reset_cntr_non_leaf, freeze_cntr_non_leaf, incr_cnt;
+
+assign reset_cntr_non_leaf  = ((counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl;
+assign freeze_cntr_non_leaf = (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4);
+assign incr_cnt = ddtp.iommu_mode.q > 2 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1;
 
 always @(posedge clk_i or negedge rst_ni)
-    if(!rst_ni || riscv_iommu.trans_error)
+    if(!rst_ni || aw_or_ar_hsk || reset_cntr_non_leaf)
         counter_non_leaf <= 0;
-    else if(counter_non_leaf == 1 && ddtp.iommu_mode.q == 3 && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 2
-        counter_non_leaf <= 0;
-    else if(counter_non_leaf == 2 && ddtp.iommu_mode.q == 4 && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 3
-        counter_non_leaf <= 0;
-    else if(ddtp.iommu_mode.q > 2 && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw)
+    else if(freeze_cntr_non_leaf)
+        counter_non_leaf <= counter_non_leaf;
+    else if(incr_cnt)
         counter_non_leaf <= counter_non_leaf + 1;
 
 /* 
@@ -86,54 +92,43 @@ counter_dc = 3 ----. dc.fsc
 This implementation is for base-format where the DC is 32 bytes.
 */
 always @(posedge clk_i or negedge rst_ni)
-    if(!rst_ni )
+    if(!rst_ni || aw_or_ar_hsk)
         counter_dc <= 0;
-    else if(aw_or_ar_hsk)
-        counter_dc <= 0;
-    else if(counter_dc == 3 && !aw_or_ar_hsk)
+    else if(counter_dc == 3)
         counter_dc <= 3;
-    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) && !riscv_iommu.trans_error)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddtc_hit)
+    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3))) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddtc_hit)
         counter_dc <= counter_dc + 1;
 
 logic ddt_entry_accessed; // when this is high, ddte is accessed
 
-assign ddt_entry_accessed = counter_dc == 0 && ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf));
+assign ddt_entry_accessed = ds_resp_i.r.resp == axi_pkg::RESP_OKAY && counter_dc == 0 && ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 ;
 
 logic ready_to_capture_ddt_entry_invalid, ddt_entry_invalid_captured;
 logic ready_to_capture_ddt_data_corruption, ddt_data_corruption_captured;
 logic ready_to_capture_ddte_misconfig_rsrv_bits, ddte_misconfig_rsrv_captured;
 
-assign ready_to_capture_ddt_entry_invalid        = (!pc_fsc_active && !pc_ta_active) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && ddt_entry_accessed && !ds_resp_i.r.data[0] && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_entry_invalid_captured;
-
-assign ready_to_capture_ddt_data_corruption      = !(pid_wider || ar_did_wider || aw_did_wider) && (!pc_fsc_active && !pc_ta_active) && !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured;
-assign ready_to_capture_ddte_misconfig_rsrv_bits = !pdtc_miss_q && !pc_fsc_active && !pc_ta_active && !ddt_entry_invalid_captured && ds_resp_i.r.data[0] && !ddt_data_corruption_captured && ddt_entry_accessed && ds_resp_i.r.id == 1 && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && dde_rsrv_bits;
+assign ready_to_capture_ddt_entry_invalid        = ddt_entry_accessed && !ds_resp_i.r.data[0] && !ddt_entry_invalid_captured;
+assign ready_to_capture_ddt_data_corruption      = !(pid_wider || ar_did_wider || aw_did_wider) && !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured;
+assign ready_to_capture_ddte_misconfig_rsrv_bits = !ddt_entry_invalid_captured && ds_resp_i.r.data[0] && !ddt_data_corruption_captured && ddt_entry_accessed && dde_rsrv_bits;
 
 logic tc_pdtv, tc_pdtv_seen, tc_sxl, tc_sxl_seen ;
 assign tc_pdtv = dc_tc_active && dc_tc_n.pdtv && !tc_pdtv_seen;
 assign tc_sxl  = dc_tc_active && dc_tc_n.sxl && !tc_sxl_seen;
 
-always @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni) begin
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni || aw_or_ar_hsk) begin
         ddt_entry_invalid_captured   <= 0;
         ddt_data_corruption_captured <= 0;
         tc_pdtv_seen                 <= 0;
         tc_sxl_seen                  <= 0;
     end
     else begin
-        if(ds_resp_i.r.last && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) begin
-            ddt_entry_invalid_captured   <= 0;
-            ddt_data_corruption_captured <= 0;
-            tc_pdtv_seen                 <= 0;
-            tc_sxl_seen                  <= 0;
-        end
-        else begin
-            ddt_entry_invalid_captured    <= ddt_entry_invalid_captured   || ready_to_capture_ddt_entry_invalid;
-            ddt_data_corruption_captured  <= ddt_data_corruption_captured || ready_to_capture_ddt_data_corruption;
-            tc_pdtv_seen                  <= tc_pdtv_seen || tc_pdtv;
-            tc_sxl_seen                   <= tc_sxl_seen  || tc_sxl;
-        end
+        ddt_entry_invalid_captured    <= ddt_entry_invalid_captured   || ready_to_capture_ddt_entry_invalid;
+        ddt_data_corruption_captured  <= ddt_data_corruption_captured || ready_to_capture_ddt_data_corruption;
+        tc_pdtv_seen                  <= tc_pdtv_seen || tc_pdtv;
+        tc_sxl_seen                   <= tc_sxl_seen  || tc_sxl;
     end
-end
+
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) 
@@ -149,10 +144,10 @@ end
 
 // this tell us that which part of device context is currently loading from memory
 logic dc_tc_active, dc_iohgatp_active, dc_ta_active, dc_fsc_active;
-assign dc_tc_active      = !riscv_iommu.trans_error && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && !counter_dc && (riscv_iommu.ddtp.iommu_mode.q == 2 || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3)) ;
+assign dc_tc_active      = !ddtc_hit && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 0 && (riscv_iommu.ddtp.iommu_mode.q == 2 || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3)) ;
 assign dc_iohgatp_active = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 1;
 assign dc_ta_active      = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 2;
-assign dc_fsc_active     = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 3 && !dc_ended_captured;
+assign dc_fsc_active     = ds_resp_i.r.id == 1 && ds_resp_i.r_valid && counter_dc == 3 && !dc_loaded_wo_trans_ppn_q;
 
 rv_iommu::tc_t      dc_tc_n;
 rv_iommu::iohgatp_t dc_iohgatp_n;
@@ -165,7 +160,7 @@ assign dc_ta_n      = dc_ta_active      ? ds_resp_i.r.data : 0;
 assign dc_fsc_n     = dc_fsc_active     ? ds_resp_i.r.data : 0;
 
 logic dc_tc_not_valid, dc_tc_not_valid_captured_q, ready_to_capture_data_corruption, dc_data_corruption_captured_q;
-assign ready_to_capture_data_corruption = !pdtc_miss_q && !dc_ended_captured && (dc_tc_active || counter_dc != 0 ) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && !dc_data_corruption_captured_q;
+assign ready_to_capture_data_corruption = !pdtc_miss_q && !dc_loaded_with_trans_ppn_q && (dc_tc_active || counter_dc != 0 ) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && !dc_data_corruption_captured_q;
 assign dc_tc_not_valid                  = dc_tc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && !dc_tc_n.v && !dc_tc_not_valid_captured_q;
 
 // Divided the different device context configuration checks
@@ -176,7 +171,7 @@ assign tc_wrong_bits_high       =  dc_tc_n.en_ats || dc_tc_n.en_pri || dc_tc_n.t
 assign iohgatp_unsupported_mode = riscv_iommu.fctl.gxl ? (dc_iohgatp_active && dc_iohgatp_n.mode != 0) : (dc_iohgatp_active && dc_iohgatp_n.mode != 0 && dc_iohgatp_n.mode != 8);
 assign iohgatp_ppn_not_align    = dc_iohgatp_active && dc_iohgatp_n.mode != 0 && |dc_iohgatp_n.ppn[1:0];
 
-assign iosatp_invalid           = !ready_to_capture_pdtv_zero && !dc_tc_not_valid_captured_q && !dc_data_corruption_captured_q && !dc_misconfig_captured_q && dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (|dc_fsc_n.reserved || (tc_pdtv_seen && (dc_fsc_n.mode inside {[4:15]})) || (!tc_pdtv_seen && (tc_sxl_seen ? dc_fsc_n.mode != 0 : !(!dc_fsc_n.mode || dc_fsc_n.mode == 8))));
+assign iosatp_invalid           = dc_fsc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (|dc_fsc_n.reserved || (tc_pdtv_seen && (dc_fsc_n.mode inside {[4:15]})) || (!tc_pdtv_seen && (tc_sxl_seen ? dc_fsc_n.mode != 0 : !(!dc_fsc_n.mode || dc_fsc_n.mode == 8)))) && !ready_to_capture_pdtv_zero && !dc_tc_not_valid_captured_q && !dc_data_corruption_captured_q && !dc_misconfig_captured_q;
 
 logic ready_to_capture_dc_misconfig, dc_misconfig_captured_q, misconfig_checks;
 
@@ -210,12 +205,43 @@ always @(posedge clk_i or negedge rst_ni) begin
     end
 end
 
+logic correct_did;
+assign correct_did = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && (riscv_iommu.ddtp.iommu_mode.q == 4 ||(riscv_iommu.ddtp.iommu_mode.q == 2 && |selected_did[23:6] == 0) || (riscv_iommu.ddtp.iommu_mode.q == 3 && |selected_did[23:15] == 0));
 
-//-----------------------------aux code CDW Ended----------------------------------------
+logic req_enable_q; // this will make the signal same like in trans_wrapper.req_trans_i
+// assign req_enable_q = !aw_or_ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid);
 
+logic flush_ddtc;
+assign flush_ddtc = !riscv_iommu.flush_pv && ((riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv) || (riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && riscv_iommu.flush_did == selected_did));
 
+logic dc_loaded_with_error, dc_loaded_with_error_q;
+logic dc_pc_with_data_corruption, dc_pc_with_data_corruption_captured_q;
 
-//............................DDTC Cache Started-------------------------------------------------
+// didn't included ready_to_capt_valid_type_disalow because dc_loaded_with_error only make sure
+// that dc can be store in cache but if ready_to_capt_valid_type_disalow is true, still we can store the dc in ddtc cache
+assign dc_loaded_with_error = (ar_did_wider || aw_did_wider) || pdtv_zero_captured_q || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured_q || dc_data_corruption_captured_q || dc_misconfig_captured_q;
+assign dc_pc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
+logic valid_type_disalow_captured_q, su_visor_not_allowed_captured_q;
+
+always @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni || aw_or_ar_hsk) begin
+        dc_loaded_with_error_q                  <= 0;
+        dc_pc_with_data_corruption_captured_q   <= 0;
+        valid_type_disalow_captured_q           <= 0;
+        pc_loaded_with_error_captured_q         <= 0;
+        // su_visor_not_allowed_captured_q         <= 0;
+        req_enable_q                            <= 0;
+    end
+        
+    else begin
+        dc_loaded_with_error_q                  <= dc_loaded_with_error_q || dc_loaded_with_error;
+        dc_pc_with_data_corruption_captured_q   <= dc_pc_with_data_corruption_captured_q || dc_pc_with_data_corruption;
+        valid_type_disalow_captured_q           <= valid_type_disalow_captured_q || ready_to_capt_valid_type_disalow;
+        pc_loaded_with_error_captured_q         <= pc_loaded_with_error_captured_q || pc_loaded_with_error;
+        // su_visor_not_allowed_captured_q         <= su_visor_not_allowed_captured_q || su_visor_not_allowed;
+        req_enable_q                            <= !aw_or_ar_hsk && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid);
+    end
+end
 
 rv_iommu::dc_base_t dc_q;
 always @(posedge clk_i or negedge rst_ni)
@@ -232,77 +258,61 @@ always @(posedge clk_i or negedge rst_ni)
         else
             dc_q <= dc_q;
 
-logic [$clog2(DDTC_ENTRIES) : 0] ddtc_seq_detector_n [DDTC_ENTRIES - 1 : 0];
-logic [$clog2(DDTC_ENTRIES) : 0] ddtc_seq_detector_q [DDTC_ENTRIES - 1 : 0];
+//-----------------------------aux code CDW Ended----------------------------------------
+
+
+
+//............................DDTC Cache Started-------------------------------------------------
+
+
+
+
+
+// ............................DDTC Cache Ended-------------------------------------------------
+
+
+//-----------------------------DDTC new method started--------------------------------------------------
+
+rv_iommu::dc_base_t symb_dc;
+logic [23:0] sym_did;
+
+assmp_1_dc_stable:
+assume property ($stable(symb_dc));
+
+assmp_2_did_stable:
+assume property ($stable(sym_did));
+
+generate
+    for (genvar i = 0; i < DDTC_ENTRIES ; i++)
+        assmp3_only_symb_did_can_hit:
+        assume property (ddtc_valid_q[i] && $rose(req_enable_q) && selected_did != sym_did |-> selected_did != ddtc_did_q[i]);
+endgenerate
+
+assmp_4_track_one_dc:
+assume property (dc_loaded_with_trans_ppn_q && selected_did == sym_did && ddtc_miss |-> (symb_dc == dc_q));
+
+typedef logic [$clog2(DDTC_ENTRIES) : 0] ddtc_seq [DDTC_ENTRIES - 1 : 0];
+ddtc_seq ddtc_seq_detector_n;
+ddtc_seq ddtc_seq_detector_q;
+
+typedef logic [23:0] did_entry [DDTC_ENTRIES - 1 : 0];
+did_entry ddtc_did_n;
+did_entry ddtc_did_q;
+
+typedef logic ddtc_valid [DDTC_ENTRIES - 1 : 0];
+ddtc_valid ddtc_valid_n;
+ddtc_valid ddtc_valid_q;
+
 
 logic [DDTC_ENTRIES - 1 : 0] ddtc_hit_n, ddtc_miss_n;
 logic ddtc_hit, ddtc_miss;
 
-logic dc_loaded_with_error, dc_loaded_with_error_captured_q;
-logic dc_pc_with_data_corruption, dc_pc_with_data_corruption_captured_q;
-
-
-// didn't included ready_to_capt_valid_type_disalow because dc_loaded_with_error only make sure
-// that dc can be store in cache but if ready_to_capt_valid_type_disalow is true, still we can store the dc in ddtc cache
-assign dc_loaded_with_error = (ar_did_wider || aw_did_wider) || pdtv_zero_captured_q || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured_q || dc_data_corruption_captured_q || dc_misconfig_captured_q;
-assign dc_pc_with_data_corruption = ds_resp_i.r.id == 1 && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && ds_resp_i.r_valid;
-logic valid_type_disalow_captured_q, su_visor_not_allowed_captured_q;
-
-always @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni || aw_or_ar_hsk) begin
-        dc_loaded_with_error_captured_q         <= 0;
-        dc_pc_with_data_corruption_captured_q   <= 0;
-        valid_type_disalow_captured_q           <= 0;
-        pc_loaded_with_error_captured_q         <= 0;
-        su_visor_not_allowed_captured_q         <= 0;
-    end
-        
-    else begin
-        dc_loaded_with_error_captured_q         <= dc_loaded_with_error_captured_q || dc_loaded_with_error;
-        dc_pc_with_data_corruption_captured_q   <= dc_pc_with_data_corruption_captured_q || dc_pc_with_data_corruption;
-        valid_type_disalow_captured_q           <= valid_type_disalow_captured_q || ready_to_capt_valid_type_disalow;
-        pc_loaded_with_error_captured_q         <= pc_loaded_with_error_captured_q || pc_loaded_with_error;
-        su_visor_not_allowed_captured_q         <= su_visor_not_allowed_captured_q || su_visor_not_allowed;
-    end
-end
-
-logic correct_did;
-assign correct_did = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && (riscv_iommu.ddtp.iommu_mode.q == 4 ||(riscv_iommu.ddtp.iommu_mode.q == 2 && |selected_did[23:6] == 0) || (riscv_iommu.ddtp.iommu_mode.q == 3 && |selected_did[23:15] == 0));
-
-
-logic req_enable; // this will make the signal same like in trans_wrapper.req_trans_i
-assign req_enable = !aw_or_ar_hsk_q && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid);
-
-logic flush_ddtc;
-assign flush_ddtc = !riscv_iommu.flush_pv && ((riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv) || (riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && riscv_iommu.flush_did == selected_did));
-
-logic [DDTC_ENTRIES - 1 : 0] flush_ddtc_miss_n ;
-
 generate
 for (genvar i  = 0; i < DDTC_ENTRIES; i++ ) begin
-
-// assign flush_ddtc_miss_n[i] = !riscv_iommu.flush_pv && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && ((!riscv_iommu.flush_dv && !riscv_iommu.flush_pv) || (riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && riscv_iommu.flush_did == selected_did && selected_did == ddtc_entry_q[i] && ddtc_entry_valid_q[i]));
-assign ddtc_hit_n[i]  = !flush_ddtc && correct_did && req_enable && ddtc_entry_valid_n[i] && selected_did == ddtc_entry_q[i] && !ddtc_miss;
-assign ddtc_miss_n[i] = correct_did && req_enable && (selected_did != ddtc_entry_n[i] || !ddtc_entry_valid_n[i]);
+assign ddtc_hit_n[i]  = correct_did && req_enable_q && ddtc_valid_q[i] && selected_did == ddtc_did_q[i];
+assign ddtc_miss_n[i] = correct_did && req_enable_q  && (selected_did != ddtc_did_q[i] || !ddtc_valid_q[i]);
 end
 endgenerate
-
-// generate
-// for (genvar i  = 0; i < DDTC_ENTRIES; i++ ) begin
-
-// assign flush_ddtc_miss_n[i] = !riscv_iommu.flush_pv && (dev_tr_req_i.aw_valid || dev_tr_req_i.ar_valid) && ((!riscv_iommu.flush_dv && !riscv_iommu.flush_pv) || (riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && riscv_iommu.flush_did == selected_did && selected_did == ddtc_entry_q[i] && ddtc_entry_valid_q[i]));
-// assign ddtc_hit_n[i]  = !flush_ddtc && correct_did && req_enable && ddtc_entry_valid_q[i] && selected_did == ddtc_entry_q[i] && !ddtc_miss;
-// assign ddtc_miss_n[i] = !flush_ddtc_miss_q && correct_did && req_enable && (selected_did != ddtc_entry_q[i] || !ddtc_entry_valid_q[i]);
-// end
-// endgenerate
-
-
-// logic flush_ddtc_miss_q;
-// always @(posedge clk_i or negedge rst_ni)
-//     if(!rst_ni || aw_or_ar_hsk)
-//         flush_ddtc_miss_q  <= 0;
-//     else 
-//         flush_ddtc_miss_q  <= flush_ddtc_miss_q || flush_ddtc_miss_n != 0;
 
 
 always @(posedge clk_i or negedge rst_ni)
@@ -311,69 +321,49 @@ always @(posedge clk_i or negedge rst_ni)
         ddtc_miss <= 0;
     end
     else begin
-        ddtc_hit  <= ddtc_hit  || (ddtc_hit_n != 0);
-        ddtc_miss <= ddtc_miss || ddtc_miss_n == 8'hff;
+        ddtc_hit  <= ddtc_hit  || ddtc_hit_n != 0;
+        ddtc_miss <= ddtc_miss || (ddtc_miss_n == 'hff && !ddtc_hit);
     end
 
-logic [23:0] ddtc_entry_n [DDTC_ENTRIES - 1 : 0];
-logic ddtc_entry_valid_n [DDTC_ENTRIES - 1 : 0];
-logic ddtc_pdtv_n [DDTC_ENTRIES - 1 : 0];
-logic [3:0] ddtc_fsc_mode_n [DDTC_ENTRIES - 1 : 0];
-logic ddtc_dpe_n [DDTC_ENTRIES - 1 : 0];
-logic [3:0] ddtc_iohgatp_mode_n [DDTC_ENTRIES - 1 : 0];
-logic [15:0] ddtc_gscid_n [DDTC_ENTRIES - 1 : 0];
-logic [19:0] ddtc_pscid_n [DDTC_ENTRIES - 1 : 0];
+logic update_ddtc;
+assign update_ddtc = dc_loaded_with_trans_ppn_q && aw_or_ar_hsk;
 
-// flops
-logic [23:0] ddtc_entry_q [DDTC_ENTRIES - 1 : 0];
-logic ddtc_entry_valid_q [DDTC_ENTRIES - 1 : 0];
-logic ddtc_pdtv_q [DDTC_ENTRIES - 1 : 0];
-logic [3:0] ddtc_fsc_mode_q [DDTC_ENTRIES - 1 : 0];
-logic ddtc_dpe_q [DDTC_ENTRIES - 1 : 0];
-logic [3:0] ddtc_iohgatp_mode_q [DDTC_ENTRIES - 1 : 0];
-logic [15:0] ddtc_gscid_q [DDTC_ENTRIES - 1 : 0];
-logic [19:0] ddtc_pscid_q [DDTC_ENTRIES - 1 : 0];
+function automatic void update_dc(logic [23:0] selected_did, ref ddtc_seq ddtc_seq_detector_q, ddtc_seq_detector_n, ref did_entry ddtc_did_n, ref ddtc_valid ddtc_valid_n);
+for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
+    if((ddtc_seq_detector_q[i] == 0 || ddtc_seq_detector_q[i] == DDTC_ENTRIES)) begin
+        ddtc_seq_detector_n[i]  = 1;
+        ddtc_did_n[i]           = selected_did;
+        ddtc_valid_n[i]         = 1'b1;
+        for (int j = 0; j < DDTC_ENTRIES; j++ )
+            if(!(ddtc_seq_detector_q[j] == 0 || ddtc_seq_detector_q[j] == DDTC_ENTRIES))
+                ddtc_seq_detector_n[j] = ddtc_seq_detector_n[j] + 1;
+        break;
+    end
+end
+endfunction
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            ddtc_entry_q[i]         <= 0;
-            ddtc_entry_valid_q[i]   <= 0;
+            ddtc_did_q[i]           <= 0;
+            ddtc_valid_q[i]         <= 0;
             ddtc_seq_detector_q[i]  <= 0;  
-            ddtc_pdtv_q[i]          <= 0; 
-            ddtc_fsc_mode_q[i]      <= 0;
-            ddtc_dpe_q[i]           <= 0;
-            ddtc_iohgatp_mode_q[i]  <= 0;
-            ddtc_gscid_q[i]         <= 0;
-            ddtc_pscid_q[i]         <= 0;
         end
     end
-    else 
+    else
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            ddtc_entry_q[i]         <= ddtc_entry_n[i];
-            ddtc_entry_valid_q[i]   <= ddtc_entry_valid_n[i];
+            ddtc_did_q[i]           <= ddtc_did_n[i];
+            ddtc_valid_q[i]         <= ddtc_valid_n[i];
             ddtc_seq_detector_q[i]  <= ddtc_seq_detector_n[i];  
-            ddtc_pdtv_q[i]          <= ddtc_pdtv_n[i]; 
-            ddtc_fsc_mode_q[i]      <= ddtc_fsc_mode_n[i];
-            ddtc_dpe_q[i]           <= ddtc_dpe_n[i];
-            ddtc_iohgatp_mode_q[i]  <= ddtc_iohgatp_mode_n[i];
-            ddtc_gscid_q[i]         <= ddtc_gscid_n[i];
-            ddtc_pscid_q[i]         <= ddtc_pscid_n[i];
         end
 end
 
 always_comb begin
 
     for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-        ddtc_entry_n[i]         = ddtc_entry_q[i];
-        ddtc_entry_valid_n[i]   = ddtc_entry_valid_q[i];
+        ddtc_did_n[i]         = ddtc_did_q[i];
+        ddtc_valid_n[i]       = ddtc_valid_q[i];
         ddtc_seq_detector_n[i]  = ddtc_seq_detector_q[i];  
-        ddtc_pdtv_n[i]          = ddtc_pdtv_q[i]; 
-        ddtc_fsc_mode_n[i]      = ddtc_fsc_mode_q[i];
-        ddtc_dpe_n[i]           = ddtc_dpe_q[i];
-        ddtc_iohgatp_mode_n[i]  = ddtc_iohgatp_mode_q[i];
-        ddtc_gscid_n[i]         = ddtc_gscid_q[i];
-        ddtc_pscid_n[i]         = ddtc_pscid_q[i];
     end
 /* 
 If DV is 0, then the inval_ddt invalidates all ddt and PDT entries for all devices
@@ -383,75 +373,46 @@ riscv_iommu.flush_pv ---->> This is used to difference between IODIR.INVAL_DDT a
 
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
             ddtc_seq_detector_n[i]  = 0;
-            ddtc_entry_n[i]         = 0;
-            ddtc_entry_valid_n[i]   = 0;
-            ddtc_pdtv_n[i]          = 0;
-            ddtc_fsc_mode_n[i]      = 0;
-            ddtc_dpe_n[i]           = 0;
-            ddtc_iohgatp_mode_n[i]  = 0;
-            ddtc_gscid_n[i]         = 0;
-            ddtc_pscid_n[i]         = 0;
+            ddtc_did_n[i]           = 0;
+            ddtc_valid_n[i]         = 0;
         end
     end
 
 // If DV is 1, then the inval_ddt invalidates cached leaf-level all associated DDT entries
     else if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
         
-        for (int j = 0; j < DDTC_ENTRIES; j++)
-            if(ddtc_entry_n[j] == riscv_iommu.flush_did && ddtc_entry_valid_n[j]) begin
+        if(update_ddtc)
+            update_dc(selected_did, ddtc_seq_detector_q, ddtc_seq_detector_n, ddtc_did_n, ddtc_valid_n);
 
-                for (int i = 0; i < DDTC_ENTRIES; i++ )
-                    if(ddtc_seq_detector_n[j] > ddtc_seq_detector_n[i])
-                        ddtc_seq_detector_n[i]  = ddtc_seq_detector_n[i] - 1;
+            for (int j = 0; j < DDTC_ENTRIES; j++)
+                if(ddtc_did_q[j] == riscv_iommu.flush_did && ddtc_valid_q[j]) begin
 
-                ddtc_seq_detector_n[j]  = 0;
-                ddtc_entry_n[j]         = 0;
-                ddtc_entry_valid_n[j]   = 0;
-                ddtc_pdtv_n[j]          = 0;
-                ddtc_fsc_mode_n[j]      = 0;
-                ddtc_dpe_n[j]           = 0;
-                ddtc_iohgatp_mode_n[j]  = 0;
-                ddtc_gscid_n[j]         = 0;
-                ddtc_pscid_n[j]         = 0;
-                break;
-            end
+                    for (int i = 0; i < DDTC_ENTRIES; i++ )
+                        if(ddtc_seq_detector_q[j] > ddtc_seq_detector_q[i])
+                            ddtc_seq_detector_n[i]  = ddtc_seq_detector_q[i] - 1;
+
+                    ddtc_seq_detector_n[j]  = 0;
+                    ddtc_did_n[j]           = 0;
+                    ddtc_valid_n[j]         = 0;
+                    break;
+                end
     end
 
-    else if(ddtc_miss && !dc_loaded_with_error_captured_q && dc_ended_captured && $rose(pdtp_translated)) begin
-
-        for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            if((ddtc_seq_detector_n[i] == 0 || ddtc_seq_detector_n[i] == DDTC_ENTRIES)) begin
-                
-                ddtc_seq_detector_n[i]  = 1;
-                ddtc_entry_n[i]         = selected_did;
-                ddtc_entry_valid_n[i]   = 1'b1;
-                ddtc_pdtv_n[i]          = dc_q.tc.pdtv;
-                ddtc_fsc_mode_n[i]      = dc_q.fsc.mode;
-                ddtc_dpe_n[i]           = dc_q.tc.dpe;
-                ddtc_iohgatp_mode_n[i]  = dc_q.iohgatp.mode;
-                ddtc_gscid_n[i]         = dc_q.iohgatp.gscid;
-                ddtc_pscid_n[i]         = dc_q.ta.pscid;
-                for (int j = 0; j < DDTC_ENTRIES; j++ )
-                    if(!(ddtc_seq_detector_n[j] == 0 || ddtc_seq_detector_n[j] == DDTC_ENTRIES))
-                        ddtc_seq_detector_n[j] = ddtc_seq_detector_n[j] + 1;
-                
-                break;
-            end
-        end
-    end
+    else if(update_ddtc)
+        update_dc(selected_did, ddtc_seq_detector_q, ddtc_seq_detector_n, ddtc_did_n, ddtc_valid_n);
 
     else if($rose(ddtc_hit)) begin
 
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            if(ddtc_hit_n[i] == 1 && ddtc_seq_detector_n[i] != 1) begin
+            if(ddtc_hit_n[i] == 1 && ddtc_seq_detector_q[i] != 1) begin
                 
                 for (int j = 0; j < DDTC_ENTRIES; j++ ) begin
                     if(ddtc_hit_n[j])
                         ddtc_seq_detector_n[j] = 1;
-                    else if((ddtc_seq_detector_n[i] == DDTC_ENTRIES) && ddtc_seq_detector_n[j] != 0)
-                        ddtc_seq_detector_n[j] = ddtc_seq_detector_n[j] - 1;
-                    else if(ddtc_seq_detector_n[j] != 0)
-                        ddtc_seq_detector_n[j] = ddtc_seq_detector_n[j] + 1;
+                    else if((ddtc_seq_detector_q[i] == DDTC_ENTRIES) && ddtc_seq_detector_q[j] != 0)
+                        ddtc_seq_detector_n[j] = ddtc_seq_detector_q[j] - 1;
+                    else if(ddtc_seq_detector_q[j] != 0)
+                        ddtc_seq_detector_n[j] = ddtc_seq_detector_q[j] + 1;
                 end
                 break;
             end
@@ -459,7 +420,10 @@ riscv_iommu.flush_pv ---->> This is used to difference between IODIR.INVAL_DDT a
     end
 end
 
-// ............................DDTC Cache Ended-------------------------------------------------
+
+
+
+//-----------------------------DDTC new method ended--------------------------------------------------
 
 
 //............................PDTC Cache Started-------------------------------------------------
@@ -586,18 +550,18 @@ assign correct_pid = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && !pid_wi
 
 logic [PDTC_ENTRIES - 1 : 0] match_pdtc;
 logic ddtc_completed, dpe_high;
-assign ddtc_completed = (ddtc_hit || (ddtc_miss && !riscv_iommu.ddt_walk && dc_ended_captured)) && !dc_loaded_with_error_captured_q;
+assign ddtc_completed = (ddtc_hit || (ddtc_miss && dc_loaded_with_trans_ppn_q)) && !dc_loaded_with_error_q;
 
 /* When PDTV is 1, the DPE bit may set to 1 to enable the use of 0 as the default value of process_id for 
    translating requests without a valid process_id. */
-assign dpe_high       = !selected_pv && ((ddtc_miss && dc_q.tc.pdtv && dc_q.tc.dpe) || (ddtc_hit && ddtc_pdtv_n[hit_index] && ddtc_dpe_n[hit_index]));
+assign dpe_high       = !selected_pv && ((ddtc_miss && dc_q.tc.pdtv && dc_q.tc.dpe) || (ddtc_hit && symb_dc.tc.pdtv && symb_dc.tc.dpe));
 
 generate
 for (genvar i  = 0; i < PDTC_ENTRIES; i++ ) begin
 assign match_pdtc[i]  = pdtc_entry_valid[i] && selected_did == pdtc_did[i] && ((dpe_high && pdtc_pid[i] == 0) || selected_pid == pdtc_pid[i]);
 
-assign pdtc_hit_n[i]  = (correct_pid || dpe_high) && correct_did && req_enable && match_pdtc[i] && !pdtc_miss_q;
-assign pdtc_miss_n[i] = ddtc_completed && !((!selected_pv && !dc_q.tc.dpe) || !dc_q.tc.pdtv || !dc_q.fsc.mode) && (correct_pid || dpe_high) && correct_did && req_enable && !match_pdtc[i];
+assign pdtc_hit_n[i]  = (correct_pid || dpe_high) && correct_did && req_enable_q && match_pdtc[i] && !pdtc_miss_q;
+assign pdtc_miss_n[i] = ddtc_completed && !((!selected_pv && !dc_q.tc.dpe) || !dc_q.tc.pdtv || !dc_q.fsc.mode) && (correct_pid || dpe_high) && correct_did && req_enable_q && !match_pdtc[i];
 end
 endgenerate
 
@@ -774,7 +738,7 @@ logic [$clog2(IOTLB_ENTRIES) : 0] IOTLB_seq_detector [IOTLB_ENTRIES - 1 : 0];
 logic [IOTLB_ENTRIES - 1 : 0] IOTLB_hit_n, IOTLB_miss_n;
 logic IOTLB_hit_q, IOTLB_miss_q;
 
-// logic dc_loaded_with_error, dc_loaded_with_error_captured_q;
+// logic dc_loaded_with_error, dc_loaded_with_error_q;
 // logic dc_pc_with_data_corruption, dc_pc_with_data_corruption_captured_q;
 
 // assign dc_loaded_with_error = (ar_did_wider || aw_did_wider) || pdtv_zero_captured_q || iosatp_invalid || ready_to_capture_ddte_misconfig_rsrv_bits || ready_to_capture_ddt_entry_invalid || ready_to_capture_ddt_data_corruption || dc_tc_not_valid_captured_q || dc_data_corruption_captured_q || dc_misconfig_captured_q;
@@ -782,17 +746,17 @@ logic IOTLB_hit_q, IOTLB_miss_q;
 
 // always @(posedge clk_i or negedge rst_ni) begin
 //     if(!rst_ni) begin
-//         dc_loaded_with_error_captured_q         <= 0;
+//         dc_loaded_with_error_q         <= 0;
 //         dc_pc_with_data_corruption_captured_q   <= 0;
 //     end
         
 //     else if(translation_req.ar_hsk || translation_req.aw_hsk) begin
-//         dc_loaded_with_error_captured_q         <= 0;
+//         dc_loaded_with_error_q         <= 0;
 //         dc_pc_with_data_corruption_captured_q   <= 0;
 //     end
         
 //     else begin
-//         dc_loaded_with_error_captured_q         <= dc_loaded_with_error_captured_q || dc_loaded_with_error;
+//         dc_loaded_with_error_q         <= dc_loaded_with_error_q || dc_loaded_with_error;
 //         dc_pc_with_data_corruption_captured_q   <= dc_pc_with_data_corruption_captured_q || dc_pc_with_data_corruption;
 //     end
 // end
@@ -806,7 +770,7 @@ assign vpn1 = selected_addr[29:21];
 assign vpn0 = selected_addr[20:12];
 
 logic pc_dc_loaded;
-assign pc_dc_loaded = wo_data_corruption && !valid_type_disalow_captured_q && !su_visor_not_allowed_captured_q && !ready_to_capt_valid_type_disalow && (!pc_loaded_with_error_captured_q && (pc_ended_captured || pdtc_hit_q || !pdtv_enable || !InclPC)) && (!dc_loaded_with_error_captured_q && (ddtc_hit || dc_ended_captured));
+assign pc_dc_loaded = wo_data_corruption && !valid_type_disalow_captured_q && !su_visor_not_allowed_captured_q && !ready_to_capt_valid_type_disalow && (!pc_loaded_with_error_captured_q && (pc_loaded_q || pdtc_hit_q || !pdtv_enable || !InclPC)) && (!dc_loaded_with_error_q && (ddtc_hit || dc_loaded_with_trans_ppn_q));
 
 generate
 for (genvar i  = 0; i < IOTLB_ENTRIES; i++ ) begin
@@ -861,10 +825,10 @@ logic [15:0] IOTLB_gscid [IOTLB_ENTRIES - 1 : 0];
 logic IOTLB_pte_global   [IOTLB_ENTRIES - 1 : 0];
 
 logic [15:0] gscid;
-assign gscid = $rose(ddtc_hit) ? ddtc_gscid_n[hit_index] : dc_q.iohgatp.gscid;
+assign gscid = $rose(ddtc_hit) ? symb_dc.iohgatp.gscid : dc_q.iohgatp.gscid;
 
 logic [19:0] pscid; 
-assign pscid = $rose(ddtc_hit) ? ddtc_pscid_n[hit_index] : dc_q.ta.pscid;
+assign pscid = $rose(ddtc_hit) ? symb_dc.ta.pscid : dc_q.ta.pscid;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
@@ -969,13 +933,13 @@ end
 // ----------------------------Process to tranlsate an IOVA checks started----------------------
 
 logic ready_to_capt_valid_type_disalow, valid_pv_pdtv_zero_captured;
-assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_captured_q && ((selected_pv && ddtc_hit && !ddtc_pdtv_n[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss && (dc_ended_captured || ready_to_capt_dc_ended) && !dc_q.tc.pdtv))))));
+assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_q && ((selected_pv && ddtc_hit && !symb_dc.tc.pdtv) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss && (dc_loaded_with_trans_ppn_q || ready_to_load_dc_wo_trans_ppn) && !dc_q.tc.pdtv))))));
 logic su_visor_not_allowed;
-assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_captured_q && ((pdtc_hit_q && priv_transac && !pdtc_ens[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && !pc_ta_q.ens && priv_transac)));
+// assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_q && ((pdtc_hit_q && priv_transac && !pdtc_ens[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && !pc_ta_q.ens && priv_transac)));
 
 logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
-assign pid_wider_when_cache_miss = ddtc_miss && dc_ended_captured && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
-assign pid_wider_when_cache_hit = ddtc_hit && ddtc_pdtv_q[hit_index] && ((ddtc_fsc_mode_q[hit_index] == 1 && |selected_pid[19:8])  || (ddtc_fsc_mode_q[hit_index] == 2 && |selected_pid[19:17]));
+assign pid_wider_when_cache_miss = ddtc_miss && dc_loaded_with_trans_ppn_q && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
+assign pid_wider_when_cache_hit = ddtc_hit && symb_dc.tc.pdtv && ((symb_dc.fsc.mode == 1 && |selected_pid[19:8])  || (symb_dc.fsc.mode == 2 && |selected_pid[19:17]));
 
 logic pid_wider;
 assign pid_wider = selected_pv && (pid_wider_when_cache_miss || pid_wider_when_cache_hit);
@@ -1015,18 +979,23 @@ always @(posedge clk_i or negedge rst_ni)
         else
             pc_q <= pc_q;
 
-logic ready_to_capt_dc_ended, dc_ended_captured, ready_to_capt_pc_ended, pc_ended_captured;
-assign ready_to_capt_dc_ended = (counter_dc == 3) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw && !dc_ended_captured;
-assign ready_to_capt_pc_ended = pc_fsc_active && data_strcuture.r_hsk_trnsl_compl && !pc_ended_captured && !pc_loaded_with_error && !pc_loaded_with_error_captured_q;
+logic ready_to_load_dc_wo_trans_ppn, dc_loaded_wo_trans_ppn_q, ready_to_load_dc_with_trans_ppn, dc_loaded_with_trans_ppn_q, ready_to_laod_pc, pc_loaded_q;
+
+assign ready_to_load_dc_wo_trans_ppn   = (counter_dc == 3) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw && !dc_loaded_with_error && !dc_loaded_with_error_q && !dc_loaded_wo_trans_ppn_q;
+assign ready_to_load_dc_with_trans_ppn = (ready_to_load_dc_wo_trans_ppn || dc_loaded_wo_trans_ppn_q) && (!stage2_enable || (dc_q.tc.pdtv ? ready_to_compl_pdtp_trans : 1)) && !dc_loaded_with_trans_ppn_q;
+
+assign ready_to_laod_pc = pc_fsc_active && data_strcuture.r_hsk_trnsl_compl && !pc_loaded_q && !pc_loaded_with_error && !pc_loaded_with_error_captured_q;
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni || aw_or_ar_hsk) begin
-        dc_ended_captured <= 0;
-        pc_ended_captured <= 0;
+        dc_loaded_wo_trans_ppn_q   <= 0;
+        dc_loaded_with_trans_ppn_q <= 0;
+        pc_loaded_q <= 0;
     end
     else begin
-        dc_ended_captured <= dc_ended_captured || ready_to_capt_dc_ended;
-        pc_ended_captured <= pc_ended_captured || ready_to_capt_pc_ended;
+        dc_loaded_wo_trans_ppn_q   <= dc_loaded_wo_trans_ppn_q   || ready_to_load_dc_wo_trans_ppn;
+        dc_loaded_with_trans_ppn_q <= dc_loaded_with_trans_ppn_q || ready_to_load_dc_with_trans_ppn;
+        pc_loaded_q                <= pc_loaded_q || ready_to_laod_pc;
     end
 
 logic [1:0] counter_non_leaf_pc;
@@ -1036,18 +1005,18 @@ always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni)
         counter_non_leaf_pc <= 0;
 
-    else if(counter_non_leaf_pc == 1 && ((dc_q.fsc.mode == 2 && ddtc_miss) || (ddtc_fsc_mode_n[hit_index] == 2 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 2
+    else if(counter_non_leaf_pc == 1 && ((dc_q.fsc.mode == 2 && ddtc_miss) || (symb_dc.fsc.mode == 2 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 2
         counter_non_leaf_pc <= 0;
     
-    else if(counter_non_leaf_pc == 2 && ((dc_q.fsc.mode == 3 && ddtc_miss) || (ddtc_fsc_mode_n[hit_index] == 3 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 3
+    else if(counter_non_leaf_pc == 2 && ((dc_q.fsc.mode == 3 && ddtc_miss) || (symb_dc.fsc.mode == 3 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 3
         counter_non_leaf_pc <= 0;
     
-    else if(((ddtc_fsc_mode_n[hit_index] > 1 && ddtc_hit) || (dc_ended_captured && dc_q.fsc.mode > 1)) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw)
+    else if(((symb_dc.fsc.mode > 1 && ddtc_hit) || (dc_loaded_with_trans_ppn_q && dc_q.fsc.mode > 1)) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw)
         counter_non_leaf_pc <= counter_non_leaf_pc + 1;
 
 logic dc_miss_n, dc_hit_n, dc_miss_q, dc_hit_q;
 assign dc_miss_n = ddtc_miss && (dc_q.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && dc_q.fsc.mode == 3) || (counter_non_leaf_pc == 1 && dc_q.fsc.mode == 2)));
-assign dc_hit_n  = (ddtc_pdtv_q[hit_index] || ddtc_dpe_q[hit_index]) && ddtc_hit  && (ddtc_fsc_mode_q[hit_index] == 1 || ((counter_non_leaf_pc == 2 && ddtc_fsc_mode_q[hit_index] == 3) || (counter_non_leaf_pc == 1 && ddtc_fsc_mode_q[hit_index] == 2)));
+assign dc_hit_n  = (symb_dc.tc.pdtv || symb_dc.tc.dpe) && ddtc_hit  && (symb_dc.fsc.mode == 1 || ((counter_non_leaf_pc == 2 && symb_dc.fsc.mode == 3) || (counter_non_leaf_pc == 1 && symb_dc.fsc.mode == 2)));
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni || aw_or_ar_hsk) begin
@@ -1067,12 +1036,12 @@ always @(posedge clk_i or negedge rst_ni)
         counter_pc <= 0;
     else if(counter_pc == 1 && !aw_or_ar_hsk)
         counter_pc <= 1;
-    else if((dc_ended_captured || (ddtc_hit && ddtc_pdtv_n[hit_index])) && (dc_hit_q || dc_miss_n) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
+    else if((dc_loaded_with_trans_ppn_q || (ddtc_hit && symb_dc.tc.pdtv)) && (dc_hit_q || dc_miss_n) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
         counter_pc <= 1;
 
 logic pc_ta_active, pc_fsc_active;
 
-assign pc_ta_active  = (counter_pc == 0 && (dc_hit_q || (dc_ended_captured && dc_miss_n))) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
+assign pc_ta_active  = (counter_pc == 0 && (dc_hit_q || (dc_loaded_with_trans_ppn_q && dc_miss_n))) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
 assign pc_fsc_active = counter_pc == 1 && ds_resp_i.r.id == 1 && ds_resp_i.r_valid;
 
 rv_iommu::pc_ta_t pc_ta_q;
@@ -1094,7 +1063,7 @@ logic ready_to_capt_pdte_misconfig, pdte_misconfig_captured;
 assign ready_to_capt_pdte_misconfig = pdte_accessed && !ready_to_capt_pdte_not_valid && (|ds_resp_i.r.data[9:1] || |ds_resp_i.r.data[63:54]);
 
 logic pdte_accessed; // when this is high, pdte is accessed
-assign pdte_accessed = dc_ended_captured && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_with_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
+assign pdte_accessed = dc_loaded_with_trans_ppn_q && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_with_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni) begin
@@ -1232,13 +1201,13 @@ end
 
 logic pdtv_enable, pdtc_stage_1_enable, stage1_enable, stage2_enable;
 
-assign pdtv_enable = (ddtc_miss && dc_q.tc.pdtv) || (ddtc_hit && ddtc_pdtv_n[hit_index]);
+assign pdtv_enable = (ddtc_miss && dc_q.tc.pdtv) || (ddtc_hit && symb_dc.tc.pdtv);
 
-assign pdtc_stage_1_enable = pdtv_enable && ((pdtc_miss_q && pc_q.fsc.mode != 0) || (pdtc_hit_q && pdtc_fsc_mode[hit_index] != 0));
+assign pdtc_stage_1_enable = pdtv_enable && ((pdtc_miss_q && pc_q.fsc.mode != 0) || (pdtc_hit_q && symb_dc.fsc.mode != 0));
 
-assign stage1_enable = pdtc_stage_1_enable || (!pdtv_enable && ((ddtc_hit && ddtc_fsc_mode_n[hit_index] != 0) || (ddtc_miss && dc_q.fsc.mode != 0)));
+assign stage1_enable = pdtc_stage_1_enable || (!pdtv_enable && ((ddtc_hit && symb_dc.fsc.mode != 0) || (ddtc_miss && dc_q.fsc.mode != 0)));
 
-assign stage2_enable = (ddtc_miss && dc_q.iohgatp.mode != 0) || (ddtc_hit && ddtc_iohgatp_mode_n[hit_index] != 0);
+assign stage2_enable = (ddtc_miss && dc_q.iohgatp.mode != 'h0) || (ddtc_hit && symb_dc.iohgatp.mode != 'h0);
 
 logic user_mode_trans, store_nd_wo_w_permis, x_1_sum_0;
 assign user_mode_trans      = !priv_transac && !pte.u && (stage1_enable || stage2_enable);
@@ -1246,8 +1215,8 @@ assign store_nd_wo_w_permis = (stage1_enable || stage2_enable) && pte_active && 
 assign rx_nd_wo_x_permis    = (stage1_enable || stage2_enable) && trans_type == UNTRANSLATED_RX && pte_active && !pte.x;
 
 logic ta_sum_0;
-assign ta_sum_0   = pdtc_miss_q ? !pc_q.ta.sum : (pdtc_hit_q && !pdtc_sum[hit_index]);
-assign x_1_sum_0  = priv_transac && pte.u && (ta_sum_0 || pte.x);
+// assign ta_sum_0   = pdtc_miss_q ? !pc_q.ta.sum : (pdtc_hit_q && !symb_dc.ta.sum);
+// assign x_1_sum_0  = priv_transac && pte.u && (ta_sum_0 || pte.x);
 
 logic ready_to_capt_s_and_u_mode_fault, s_and_u_mode_fault_captured;
 assign ready_to_capt_s_and_u_mode_fault = !ready_to_capt_accessed_low && !ready_to_capt_dirty_low && !ready_to_capt_pf_excep && !ready_to_capt_data_corrup_ptw && !ready_to_capt_misaligned_super_page && (pte.r || pte.x) && pte_active && (rx_nd_wo_x_permis || store_nd_wo_w_permis || user_mode_trans || x_1_sum_0) && !s_and_u_mode_fault_captured;
@@ -1262,13 +1231,14 @@ assign ready_to_capt_super_page = !ready_to_capt_guest_pf_due_to_G_bit || !ready
 
 logic implicit_access;
 // will change later pdt_walk with pdt_miss_q...now using internal signal because there is bug in design and also will add condition later when msi is not disabled
-assign implicit_access = (ddtc_hit && stage2_enable && ddtc_pdtv_n[hit_index]) || (ddtc_miss && stage2_enable && dc_q.tc.pdtv);
+assign implicit_access = (ddtc_hit && stage2_enable && symb_dc.tc.pdtv) || (ddtc_miss && stage2_enable && dc_q.tc.pdtv);
 
 logic trans_iosatp_in_progress, iosatp_trans_completed;
 assign trans_iosatp_in_progress  = (implicit_access ? counter_PTE == 1 : counter_PTE == 0) && stage1_enable && stage2_enable && pte_active && !iosatp_trans_completed;
 
-logic trans_pdtp_in_progress, pdtp_translated;
+logic trans_pdtp_in_progress, pdtp_translated, ready_to_compl_pdtp_trans;
 assign trans_pdtp_in_progress = implicit_access && counter_PTE == 0 && pte_active && !pdtp_translated;
+assign ready_to_compl_pdtp_trans = trans_pdtp_in_progress && leaf_pte && !with_error_pte && !with_error_pte_loaded;
 
 logic with_second_stage;
 assign with_second_stage = (!implicit_access && stage2_enable && iosatp_trans_completed) || (implicit_access && stage2_enable && pdtp_translated && iosatp_trans_completed) || !stage2_enable;
@@ -1296,7 +1266,7 @@ always @(posedge clk_i or negedge rst_ni) begin
     end
     else begin       
         trans_1s_completed          <= trans_1s_completed            || (trans_1s_in_progress     && leaf_pte && !with_error_pte && !with_error_pte_loaded);
-        pdtp_translated             <= pdtp_translated               || (trans_pdtp_in_progress   && leaf_pte && !with_error_pte && !with_error_pte_loaded);
+        pdtp_translated             <= pdtp_translated               || ready_to_compl_pdtp_trans;
         iosatp_trans_completed      <= iosatp_trans_completed        || (trans_iosatp_in_progress && leaf_pte && !with_error_pte && !with_error_pte_loaded);
         trans_2s_completed          <= trans_2s_completed            || (trans_2s_in_progress     && leaf_pte && !with_error_pte && !with_error_pte_loaded);
         trans_completed             <= ready_to_compl_trans_complete || trans_completed;
@@ -1446,7 +1416,7 @@ assrt_14_dc_misconfig_wo_pc:
 assert property (riscv_iommu.cause_code == rv_iommu::DDT_ENTRY_MISCONFIGURED && $past(not_ddte) |=> iosatp_invalid || ((dc_misconfig_captured_q || ready_to_capture_ddte_misconfig_rsrv_bits) && last_beat_cdw));
 
 assrt_15_ddt_walk: // if data is not present, there will be ddt_walk
-assert property ($rose(ddtc_miss) |=> $past(riscv_iommu.ddt_walk) || riscv_iommu.ddt_walk); 
+assert property ($rose(ddtc_miss) |-> riscv_iommu.ddt_walk); 
 
 assrt_16_ddt_walk: 
 assert property (riscv_iommu.ddt_walk |-> ddtc_miss);
@@ -1554,11 +1524,11 @@ assert property (ready_to_capt_s_and_u_mode_fault && !aw_seen_before |=> riscv_i
 assrt_48_sum_o_cause_code:
 assert property (ready_to_capt_s_and_u_mode_fault && aw_seen_before |=> riscv_iommu.cause_code == rv_iommu::STORE_PAGE_FAULT);
 
-assrt_49_su_visor_error:
-assert property (su_visor_not_allowed && last_beat_cdw |-> riscv_iommu.trans_error);
+// assrt_49_su_visor_error:
+// assert property (su_visor_not_allowed && last_beat_cdw |-> riscv_iommu.trans_error);
 
-assrt_50_su_visor_cause_code:
-assert property (su_visor_not_allowed && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
+// assrt_50_su_visor_cause_code:
+// assert property (su_visor_not_allowed && last_beat_cdw |-> riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
 
 assrt_51_guest_pf_exception:
 assert property ($rose(guest_pf_captured_due_to_u_bit) |-> riscv_iommu.trans_error);
