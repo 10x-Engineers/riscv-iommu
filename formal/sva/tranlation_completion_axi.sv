@@ -74,14 +74,14 @@ module axi_ds_tr_compl #(
 //------------------------stable assumption ended-----------------------
 
 // handshakes started
-    logic ar_hsk_trnsl_compl, r_hsk_trnsl_compl;
-    assign ar_hsk_trnsl_compl = axi_ds_tr_compl_o.ar_valid && axi_ds_tr_compl_i.ar_ready; 
-    assign r_hsk_trnsl_compl = axi_ds_tr_compl_o.r_ready && axi_ds_tr_compl_i.r_valid; 
+    logic ar_hsk, r_hsk;
+    assign ar_hsk = axi_ds_tr_compl_o.ar_valid && axi_ds_tr_compl_i.ar_ready; 
+    assign r_hsk = axi_ds_tr_compl_o.r_ready && axi_ds_tr_compl_i.r_valid; 
 
-    logic aw_hsk_trnsl_compl, w_hsk_trnsl_compl, b_hsk_trnsl_compl;
-    assign aw_hsk_trnsl_compl = axi_ds_tr_compl_o.aw_valid && axi_ds_tr_compl_i.aw_ready;
-    assign w_hsk_trnsl_compl  = axi_ds_tr_compl_o.w_valid && axi_ds_tr_compl_i.w_ready; 
-    assign b_hsk_trnsl_compl  = axi_ds_tr_compl_o.b_ready && axi_ds_tr_compl_i.b_valid; 
+    logic aw_hsk, w_hsk, b_hsk;
+    assign aw_hsk = axi_ds_tr_compl_o.aw_valid && axi_ds_tr_compl_i.aw_ready;
+    assign w_hsk  = axi_ds_tr_compl_o.w_valid && axi_ds_tr_compl_i.w_ready; 
+    assign b_hsk  = axi_ds_tr_compl_o.b_ready && axi_ds_tr_compl_i.b_valid; 
 // handshakes ended
 
 //-----------------Write channel started----------------------------
@@ -92,8 +92,8 @@ module axi_ds_tr_compl #(
     logic [lint_wrapper::IdWidth - 1:0] fifo_id_compl_w, capture_id_compl_w;
 
     logic push_tr_compl_w, pop_tr_compl_w;
-    assign push_tr_compl_w = aw_hsk_trnsl_compl;
-    assign pop_tr_compl_w  = w_hsk_trnsl_compl && axi_ds_tr_compl_o.w.last;
+    assign push_tr_compl_w = aw_hsk;
+    assign pop_tr_compl_w  = w_hsk && axi_ds_tr_compl_o.w.last;
 
     logic combined_empty_tr_compl_w, combined_full_tr_compl_w;
 
@@ -110,7 +110,7 @@ module axi_ds_tr_compl #(
 
 
     logic attr_selctor_compl_w;
-    assign attr_selctor_compl_w = combined_empty_tr_compl_w && aw_hsk_trnsl_compl && w_hsk_trnsl_compl;
+    assign attr_selctor_compl_w = combined_empty_tr_compl_w && aw_hsk && w_hsk;
 
     assign capture_addr_compl_w = attr_selctor_compl_w ? `aw_addr_comple : fifo_addr_compl_w;
     assign capture_size_compl_w = attr_selctor_compl_w ? `awsize_comple : fifo_size_compl_w;
@@ -126,13 +126,13 @@ module axi_ds_tr_compl #(
         if(!rst_ni)
             write_cnt_compl[i] <= 0;
 
-        else if (capture_id_compl_w == i && w_hsk_trnsl_compl && `wlast_comp && `bid_comple == i && b_hsk_trnsl_compl)
+        else if (capture_id_compl_w == i && w_hsk && `wlast_comp && `bid_comple == i && b_hsk)
             write_cnt_compl[i] <= write_cnt_compl[i];
 
-        else if (capture_id_compl_w == i && w_hsk_trnsl_compl && `wlast_comp)
+        else if (capture_id_compl_w == i && w_hsk && `wlast_comp)
             write_cnt_compl[i] <= write_cnt_compl[i] + 1;
 
-        else if (`bid_comple == i && b_hsk_trnsl_compl)
+        else if (`bid_comple == i && b_hsk)
             write_cnt_compl[i] <= write_cnt_compl[i] - 1;
 
     assmp_only_valid_bid:
@@ -151,9 +151,9 @@ module axi_ds_tr_compl #(
         if(!rst_ni)
             resp_counter_compl <= 1;
         else
-            resp_counter_compl <= resp_counter_compl + aw_hsk_trnsl_compl - b_hsk_trnsl_compl;
+            resp_counter_compl <= resp_counter_compl + aw_hsk - b_hsk;
 
-    assmp_bhsk_not_more_than_awhsk: // write_resp_hsk must not come more than the total number of aw_hsk_trnsl_compl
+    assmp_bhsk_not_more_than_awhsk: // write_resp_hsk must not come more than the total number of aw_hsk
     assume property (resp_counter_compl < 2 |-> !axi_ds_tr_compl_i.b_valid );
 
 //-----------------response channel ended--------------------------
@@ -170,8 +170,8 @@ module axi_ds_tr_compl #(
     logic [7:0] fifo_len_tr_compl_r;
     logic [lint_wrapper::IdWidth - 1:0] fifo_id_tr_compl_r;
 
-    assign push_tr_compl_r = ar_hsk_trnsl_compl;
-    assign pop_tr_compl_r  = r_hsk_trnsl_compl && axi_ds_tr_compl_i.r.last;
+    assign push_tr_compl_r = ar_hsk;
+    assign pop_tr_compl_r  = r_hsk && axi_ds_tr_compl_i.r.last;
 
     fifo #(.DEPTH_BITS(3),.DATA_WIDTH(64)) fifo_addr_tr_compl_m (clk_i, rst_ni, push_tr_compl_r, pop_tr_compl_r, axi_ds_tr_compl_o.ar.addr, fifo_addr_empty_r, fifo_addr_full_r, fifo_addr_tr_compl_r);
 
@@ -197,10 +197,10 @@ module axi_ds_tr_compl #(
         if(!rst_ni)
             counter_rlast <= 0;
 
-        else if(r_hsk_trnsl_compl && (counter_rlast == fifo_len_tr_compl_r))
+        else if(r_hsk && (counter_rlast == fifo_len_tr_compl_r))
             counter_rlast <= 0;
 
-        else if(r_hsk_trnsl_compl)
+        else if(r_hsk)
             counter_rlast <= counter_rlast + 1;
     end
 
@@ -225,12 +225,12 @@ module axi_ds_tr_compl #(
         if(!rst_ni)
             read_counter <= 1;
         else
-            read_counter <= read_counter + ar_hsk_trnsl_compl - (r_hsk_trnsl_compl && axi_ds_tr_compl_i.r.last);
+            read_counter <= read_counter + ar_hsk - (r_hsk && axi_ds_tr_compl_i.r.last);
 
     assmp_rvalid_dependency:
     assume property (axi_ds_tr_compl_i.r_valid |-> read_counter > 1);
 // rvalid must come after aw_hsk ended
 
 cov_hsk_check:
-cover property (ar_hsk_trnsl_compl || aw_hsk_trnsl_compl);
+cover property (ar_hsk || aw_hsk);
 endmodule

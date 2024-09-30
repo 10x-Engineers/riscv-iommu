@@ -1,7 +1,7 @@
 `define ar_addr dev_tr_req_i.ar.addr
 `define aw_addr dev_tr_req_i.aw.addr
 `define ds_r_channel ds_resp_i.r
-
+`define ds_intf ds_req_o
 
 logic aw_or_ar_hsk, aw_or_ar_hsk_q, stage2_enable_q;
 assign aw_or_ar_hsk = (translation_req.ar_hsk || translation_req.aw_hsk);
@@ -40,7 +40,7 @@ assign selected_addr = aw_seen_before ? dev_tr_req_i.aw.addr : (dev_tr_req_i.ar_
 
 // dpe value individually from cache or from memory
 logic dpe_indivi;
-assign dpe_indivi = (ddtc_miss && dc_loaded_with_trans_ppn_q && dc_q.tc.dpe) || (ddtc_hit && symb_dc.tc.dpe);
+assign dpe_indivi = (ddtc_miss && dc_loaded_with_trans_ppn_q && dc_q.tc.dpe) || (symb_dc_hit_q && symb_dc.tc.dpe);
 
 // If DC.tc.DPE is 1 and no valid process_id is given by the device, default value of zero is used
 logic pid_when_dpe_high;
@@ -72,9 +72,9 @@ assign last_beat_cdw = ds_resp_i.r.last && ds_resp_i.r_valid && ds_resp_i.r.id =
 logic [1:0] counter_dc, counter_non_leaf;
 logic reset_cntr_non_leaf, freeze_cntr_non_leaf, incr_cnt;
 
-assign reset_cntr_non_leaf  = ((counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl;
+assign reset_cntr_non_leaf  = ((counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4)) && last_beat_cdw && data_structure.r_hsk;
 assign freeze_cntr_non_leaf = (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3) || (counter_non_leaf == 2 && ddtp.iommu_mode.q == 4);
-assign incr_cnt = ddtp.iommu_mode.q > 2 && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1;
+assign incr_cnt = ddtp.iommu_mode.q > 2 && data_structure.r_hsk && last_beat_cdw;
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni || aw_or_ar_hsk || reset_cntr_non_leaf)
@@ -96,19 +96,19 @@ always @(posedge clk_i or negedge rst_ni)
         counter_dc <= 0;
     else if(counter_dc == 3)
         counter_dc <= 3;
-    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3))) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddtc_hit)
+    else if((ddtp.iommu_mode.q == 2 || ((counter_non_leaf == 2 && ddtp.iommu_mode.q == 4) || (counter_non_leaf == 1 && ddtp.iommu_mode.q == 3))) && data_structure.r_hsk && ds_resp_i.r.id == 1 && !ddtc_hit)
         counter_dc <= counter_dc + 1;
 
 logic ddt_entry_accessed; // when this is high, ddte is accessed
 
-assign ddt_entry_accessed = ds_resp_i.r.resp == axi_pkg::RESP_OKAY && counter_dc == 0 && ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf)) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 ;
+assign ddt_entry_accessed = ds_resp_i.r.resp == axi_pkg::RESP_OKAY && counter_dc == 0 && ((riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf < 2) || (!selected_did[23:15] && riscv_iommu.ddtp.iommu_mode.q == 3 && !counter_non_leaf)) && data_structure.r_hsk && ds_resp_i.r.id == 1 ;
 
 logic ready_to_capture_ddt_entry_invalid, ddt_entry_invalid_captured;
 logic ready_to_capture_ddt_data_corruption, ddt_data_corruption_captured;
 logic ready_to_capture_ddte_misconfig_rsrv_bits, ddte_misconfig_rsrv_captured;
 
 assign ready_to_capture_ddt_entry_invalid        = ddt_entry_accessed && !ds_resp_i.r.data[0] && !ddt_entry_invalid_captured;
-assign ready_to_capture_ddt_data_corruption      = !(pid_wider || ar_did_wider || aw_did_wider) && !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured;
+assign ready_to_capture_ddt_data_corruption      = !(pid_wider || ar_did_wider || aw_did_wider) && !ddt_entry_invalid_captured && !ddte_misconfig_rsrv_captured && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && data_structure.r_hsk && ds_resp_i.r.id == 1 && !ddt_data_corruption_captured;
 assign ready_to_capture_ddte_misconfig_rsrv_bits = !ddt_entry_invalid_captured && ds_resp_i.r.data[0] && !ddt_data_corruption_captured && ddt_entry_accessed && dde_rsrv_bits;
 
 logic tc_pdtv, tc_pdtv_seen, tc_sxl, tc_sxl_seen ;
@@ -134,7 +134,7 @@ always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) 
         ddte_misconfig_rsrv_captured <= 0;
     else begin
-        if(last_beat_cdw && data_strcuture.r_hsk_trnsl_compl &&  ((ready_to_capture_ddte_misconfig_rsrv_bits || ddte_misconfig_rsrv_captured) || (riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf == 2) || (riscv_iommu.ddtp.iommu_mode.q == 3 && counter_non_leaf == 1)))
+        if(last_beat_cdw && data_structure.r_hsk &&  ((ready_to_capture_ddte_misconfig_rsrv_bits || ddte_misconfig_rsrv_captured) || (riscv_iommu.ddtp.iommu_mode.q == 4 && counter_non_leaf == 2) || (riscv_iommu.ddtp.iommu_mode.q == 3 && counter_non_leaf == 1)))
             ddte_misconfig_rsrv_captured <= 0;
         else
             ddte_misconfig_rsrv_captured <= ddte_misconfig_rsrv_captured || ready_to_capture_ddte_misconfig_rsrv_bits;
@@ -160,7 +160,7 @@ assign dc_ta_n      = dc_ta_active      ? ds_resp_i.r.data : 0;
 assign dc_fsc_n     = dc_fsc_active     ? ds_resp_i.r.data : 0;
 
 logic dc_tc_not_valid, dc_tc_not_valid_captured_q, ready_to_capture_data_corruption, dc_data_corruption_captured_q;
-assign ready_to_capture_data_corruption = !pdtc_miss_q && !dc_loaded_with_trans_ppn_q && (dc_tc_active || counter_dc != 0 ) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && !dc_data_corruption_captured_q;
+assign ready_to_capture_data_corruption = !dc_completed && !dc_loaded_with_trans_ppn_q && (dc_tc_active || counter_dc != 0 ) && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp != axi_pkg::RESP_OKAY && !dc_data_corruption_captured_q;
 assign dc_tc_not_valid                  = dc_tc_active && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && !dc_tc_n.v && !dc_tc_not_valid_captured_q;
 
 // Divided the different device context configuration checks
@@ -190,7 +190,7 @@ always @(posedge clk_i or negedge rst_ni) begin
         pdtv_zero_captured_q             <= 0;
     end
     else begin
-        if(counter_dc == 3 && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw) begin
+        if(counter_dc == 3 && data_structure.r_hsk && last_beat_cdw) begin
             dc_tc_not_valid_captured_q       <= 0;
             dc_data_corruption_captured_q    <= 0;
             dc_misconfig_captured_q          <= 0;
@@ -262,34 +262,7 @@ always @(posedge clk_i or negedge rst_ni)
 
 
 
-//............................DDTC Cache Started-------------------------------------------------
-
-
-
-
-
-// ............................DDTC Cache Ended-------------------------------------------------
-
-
 //-----------------------------DDTC new method started--------------------------------------------------
-
-rv_iommu::dc_base_t symb_dc;
-logic [23:0] sym_did;
-
-assmp_1_dc_stable:
-assume property ($stable(symb_dc));
-
-assmp_2_did_stable:
-assume property ($stable(sym_did));
-
-generate
-    for (genvar i = 0; i < DDTC_ENTRIES ; i++)
-        assmp3_only_symb_did_can_hit:
-        assume property (ddtc_valid_q[i] && $rose(req_enable_q) && selected_did != sym_did |-> selected_did != ddtc_did_q[i]);
-endgenerate
-
-assmp_4_track_one_dc:
-assume property (dc_loaded_with_trans_ppn_q && selected_did == sym_did && ddtc_miss |-> (symb_dc == dc_q));
 
 typedef logic [$clog2(DDTC_ENTRIES) : 0] ddtc_seq [DDTC_ENTRIES - 1 : 0];
 ddtc_seq ddtc_seq_detector_n;
@@ -303,16 +276,55 @@ typedef logic ddtc_valid [DDTC_ENTRIES - 1 : 0];
 ddtc_valid ddtc_valid_n;
 ddtc_valid ddtc_valid_q;
 
-
 logic [DDTC_ENTRIES - 1 : 0] ddtc_hit_n, ddtc_miss_n;
 logic ddtc_hit, ddtc_miss;
 
-generate
-for (genvar i  = 0; i < DDTC_ENTRIES; i++ ) begin
-assign ddtc_hit_n[i]  = correct_did && req_enable_q && ddtc_valid_q[i] && selected_did == ddtc_did_q[i];
-assign ddtc_miss_n[i] = correct_did && req_enable_q  && (selected_did != ddtc_did_q[i] || !ddtc_valid_q[i]);
+rv_iommu::dc_base_t symb_dc;
+logic [23:0] sym_did;
+
+assmp_1_dc_stable:
+assume property ($stable(symb_dc));
+
+assmp_2_did_stable:
+assume property ($stable(sym_did));
+
+assmp_3_dc_equals_to_sym_dc:
+assume property (dc_loaded_with_trans_ppn_q && selected_did == sym_did |-> (symb_dc == dc_q));
+
+logic symb_dc_hit, symb_dc_miss, symb_dc_miss_q, symb_dc_hit_q;
+
+always_comb begin
+    symb_dc_hit  = symb_dc_hit_q;
+    symb_dc_miss = symb_dc_miss_q;
+    if(sym_did == selected_did && $rose(req_enable_q) && correct_did) begin
+        for (int i = 0; i < DDTC_ENTRIES ; i++) begin
+            if(ddtc_valid_q[i] && sym_did == ddtc_did_q[i] && !symb_dc_hit_q)
+                symb_dc_hit = 1;
+                break;
+        end
+        if(!symb_dc_hit)
+            symb_dc_miss = 1;
+    end
 end
-endgenerate
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni || aw_or_ar_hsk) begin
+        symb_dc_hit_q  <= 0;
+        symb_dc_miss_q <= 0;
+    end
+    else begin
+        symb_dc_hit_q  <= symb_dc_hit_q  || symb_dc_hit;
+        symb_dc_miss_q <= symb_dc_miss_q || symb_dc_miss;
+    end
+
+assrt_1_symb_ddtc_hit:
+assert property (symb_dc_hit_q |-> !riscv_iommu.ddt_walk);
+
+assrt_2_symb_ddtc_miss:
+assert property ($rose(symb_dc_miss_q) |-> riscv_iommu.ddt_walk);
+
+cov_sva_1:
+cover property(riscv_iommu.pdt_walk && symb_dc_hit_q);
 
 
 always @(posedge clk_i or negedge rst_ni)
@@ -326,53 +338,75 @@ always @(posedge clk_i or negedge rst_ni)
     end
 
 logic update_ddtc;
-assign update_ddtc = dc_loaded_with_trans_ppn_q && aw_or_ar_hsk;
+assign update_ddtc = $rose(dc_loaded_with_trans_ppn_q);
 
-function automatic void update_dc(logic [23:0] selected_did, ref ddtc_seq ddtc_seq_detector_q, ddtc_seq_detector_n, ref did_entry ddtc_did_n, ref ddtc_valid ddtc_valid_n);
-for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-    if((ddtc_seq_detector_q[i] == 0 || ddtc_seq_detector_q[i] == DDTC_ENTRIES)) begin
-        ddtc_seq_detector_n[i]  = 1;
-        ddtc_did_n[i]           = selected_did;
-        ddtc_valid_n[i]         = 1'b1;
-        for (int j = 0; j < DDTC_ENTRIES; j++ )
-            if(!(ddtc_seq_detector_q[j] == 0 || ddtc_seq_detector_q[j] == DDTC_ENTRIES))
-                ddtc_seq_detector_n[j] = ddtc_seq_detector_n[j] + 1;
-        break;
-    end
-end
-endfunction
+assrt_sva_2_miss_hit_both_high:
+assert property (!(ddtc_hit && ddtc_miss));
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni) begin
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
             ddtc_did_q[i]           <= 0;
             ddtc_valid_q[i]         <= 0;
-            ddtc_seq_detector_q[i]  <= 0;  
         end
     end
     else
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
             ddtc_did_q[i]           <= ddtc_did_n[i];
             ddtc_valid_q[i]         <= ddtc_valid_n[i];
-            ddtc_seq_detector_q[i]  <= ddtc_seq_detector_n[i];  
         end
 end
 
-always_comb begin
-
-    for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-        ddtc_did_n[i]         = ddtc_did_q[i];
-        ddtc_valid_n[i]       = ddtc_valid_q[i];
-        ddtc_seq_detector_n[i]  = ddtc_seq_detector_q[i];  
+generate
+    for (genvar i  = 0; i < DDTC_ENTRIES; i++ ) begin
+    assign ddtc_hit_n[i]   = correct_did && $rose(req_enable_q) && ddtc_valid_q[i] && selected_did == ddtc_did_q[i];
+    assign ddtc_miss_n[i]  = correct_did && req_enable_q  && (selected_did != ddtc_did_q[i] || !ddtc_valid_q[i]);
     end
+endgenerate
+
+logic [$clog2(DDTC_ENTRIES) : 0] ddtc_hit_index;
+
+always_comb begin
+    ddtc_hit_index = 0;
+    
+    for (int i  = 0; i < DDTC_ENTRIES; i++ ) begin
+        ddtc_did_n[i]   = ddtc_did_q[i];
+        ddtc_valid_n[i] = ddtc_valid_q[i];
+    end
+
+    if($rose(ddtc_hit)) begin
+        for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
+            if(ddtc_hit_n[i] == 1) begin
+                ddtc_hit_index = i;
+                break;
+            end
+        end
+        ddtc_did_n[0]  = ddtc_did_q[ddtc_hit_index];
+        ddtc_valid_n[0]= ddtc_valid_q[ddtc_hit_index];
+
+        if(ddtc_valid_q[1]) // For shifting entry 1 must be valid(or min two entries must be valid)
+            for (int i = 0; i < (DDTC_ENTRIES - 1); i++)
+                if(i <= ddtc_hit_index) begin
+                    ddtc_did_n[i+1]   = ddtc_did_q[i];
+                    ddtc_valid_n[i+1] = ddtc_valid_q[i];
+                end
+    end
+
+    if(update_ddtc) begin
+        ddtc_did_n[0]  = selected_did;
+        ddtc_valid_n[0]= 1'b1;
+        for (int i = 0; i < (DDTC_ENTRIES - 1); i++) begin
+            ddtc_did_n[i+1]   = ddtc_did_q[i];
+            ddtc_valid_n[i+1] = ddtc_valid_q[i];
+        end
+    end
+
 /* 
 If DV is 0, then the inval_ddt invalidates all ddt and PDT entries for all devices
 riscv_iommu.flush_pv ---->> This is used to difference between IODIR.INVAL_DDT and IODIR.INVAL_PDT
 */
     if(riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
-
         for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            ddtc_seq_detector_n[i]  = 0;
             ddtc_did_n[i]           = 0;
             ddtc_valid_n[i]         = 0;
         end
@@ -380,344 +414,278 @@ riscv_iommu.flush_pv ---->> This is used to difference between IODIR.INVAL_DDT a
 
 // If DV is 1, then the inval_ddt invalidates cached leaf-level all associated DDT entries
     else if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
+        for (int i = 0; i < DDTC_ENTRIES; i++)
+            if(ddtc_did_n[i] == riscv_iommu.flush_did && ddtc_valid_n[i]) begin
+                ddtc_did_n[i]           = 0;
+                ddtc_valid_n[i]         = 0;
+            end
         
-        if(update_ddtc)
-            update_dc(selected_did, ddtc_seq_detector_q, ddtc_seq_detector_n, ddtc_did_n, ddtc_valid_n);
+        for (int i = 0; i < (DDTC_ENTRIES - 1); i++)
+            for (int j = i + 1; j < DDTC_ENTRIES; j++) begin
+                if(ddtc_valid_n[i] == 0 && ddtc_valid_n[j] == 1) begin
+                    
+                    ddtc_valid_n[i] = ddtc_valid_n[j];
+                    ddtc_did_n[i]   = ddtc_did_n[j];
 
-            for (int j = 0; j < DDTC_ENTRIES; j++)
-                if(ddtc_did_q[j] == riscv_iommu.flush_did && ddtc_valid_q[j]) begin
-
-                    for (int i = 0; i < DDTC_ENTRIES; i++ )
-                        if(ddtc_seq_detector_q[j] > ddtc_seq_detector_q[i])
-                            ddtc_seq_detector_n[i]  = ddtc_seq_detector_q[i] - 1;
-
-                    ddtc_seq_detector_n[j]  = 0;
-                    ddtc_did_n[j]           = 0;
-                    ddtc_valid_n[j]         = 0;
+                    ddtc_valid_n[j] = 0;
+                    ddtc_did_n[j]   = 0;
                     break;
                 end
-    end
-
-    else if(update_ddtc)
-        update_dc(selected_did, ddtc_seq_detector_q, ddtc_seq_detector_n, ddtc_did_n, ddtc_valid_n);
-
-    else if($rose(ddtc_hit)) begin
-
-        for (int i = 0; i < DDTC_ENTRIES; i++ ) begin
-            if(ddtc_hit_n[i] == 1 && ddtc_seq_detector_q[i] != 1) begin
-                
-                for (int j = 0; j < DDTC_ENTRIES; j++ ) begin
-                    if(ddtc_hit_n[j])
-                        ddtc_seq_detector_n[j] = 1;
-                    else if((ddtc_seq_detector_q[i] == DDTC_ENTRIES) && ddtc_seq_detector_q[j] != 0)
-                        ddtc_seq_detector_n[j] = ddtc_seq_detector_q[j] - 1;
-                    else if(ddtc_seq_detector_q[j] != 0)
-                        ddtc_seq_detector_n[j] = ddtc_seq_detector_q[j] + 1;
-                end
-                break;
-            end
-        end
+            end     
     end
 end
 
-
-
-
+assrt_sva_1_ddtc_hit_onehot0:
+assert property ($onehot0(ddtc_hit_n));
 //-----------------------------DDTC new method ended--------------------------------------------------
 
 
-//............................PDTC Cache Started-------------------------------------------------
-
-logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector_n [PDTC_ENTRIES - 1 : 0];
-logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector_sorted [PDTC_ENTRIES - 1 : 0];
-logic [$clog2(PDTC_ENTRIES) : 0] pdtc_sff, pdtc_saf, pdtc_temp, pdtc_consec_big; // small before flush, small after flush, consectuve big
-
-always_comb begin
-    // initialize with 0
-    pdtc_sff        = 0;
-    pdtc_saf        = 0;
-    pdtc_consec_big = 0;
-    pdtc_temp       = 0;
-
-    for (int i = 0; i < PDTC_ENTRIES; i++) begin
-        pdtc_seq_detector_n[i] = 0;
-        pdtc_seq_detector_sorted[i] = 0;
-    end
-
-    if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
-       
-    //    pdtc_sff = pdtc_seq_detector[0];
-
-        for (int i = 0; i < PDTC_ENTRIES; i++) begin
-        
-            pdtc_seq_detector_n[i] = pdtc_seq_detector[i];
-
-        // Step 1: Flush wherever requires
-            if(pdtc_did[i] == riscv_iommu.flush_did && pdtc_entry_valid[i]) begin
-                pdtc_seq_detector_n[i] = 0;
-
-                // Step 2: Take small from flush(sff)
-                if(pdtc_sff == 0)
-                    pdtc_sff = pdtc_seq_detector[i];
-                else if(pdtc_seq_detector[i] < pdtc_sff)
-                    pdtc_sff = pdtc_seq_detector[i];
-            end
-
-        // Step 3: Sort the sequences after flush
-            pdtc_seq_detector_sorted[i] = pdtc_seq_detector_n[i];
-        end
-
-        for (int i = 0; i < PDTC_ENTRIES; i++)
-            for (int j = 0; j < PDTC_ENTRIES; j++) begin
-                 if(pdtc_seq_detector_sorted[i] < pdtc_seq_detector_sorted[j]) begin
-                    pdtc_temp = pdtc_seq_detector_sorted[i];
-                    pdtc_seq_detector_sorted[i] = pdtc_seq_detector_sorted[j];
-                    pdtc_seq_detector_sorted[j] = pdtc_temp;
-                end
-            end
-
-        // Step 4: Take small after flush(saf)
-        // pdtc_saf = pdtc_seq_detector_sorted[0];
-        for(int i = 0; i < PDTC_ENTRIES; i++)
-          if(pdtc_saf == 0)
-            pdtc_saf = pdtc_seq_detector_sorted[i];
-          else if(pdtc_seq_detector_sorted[i] < pdtc_saf)
-            pdtc_saf = pdtc_seq_detector_sorted[i];
-
-        // Step 5: Take consecutive_big
-        pdtc_consec_big = pdtc_sff;
-        for(int i = 0; i < PDTC_ENTRIES; i++)
-            if(pdtc_seq_detector_sorted[i] == (pdtc_consec_big + 1))
-                pdtc_consec_big = pdtc_seq_detector_sorted[i];
-    end
-
-    else if(riscv_iommu.flush_pdtc && riscv_iommu.flush_pv) begin
-    //    pdtc_sff = pdtc_seq_detector[0];
-
-        for (int i = 0; i < PDTC_ENTRIES; i++) begin
-        
-            pdtc_seq_detector_n[i] = pdtc_seq_detector[i];
-
-        // Step 1: Flush wherever requires
-            if(pdtc_did[i] == riscv_iommu.flush_did && pdtc_pid[i] == riscv_iommu.flush_pid && pdtc_entry_valid[i]) begin
-                pdtc_seq_detector_n[i] = 0;
-
-                // Step 2: Take small from flush(sff)
-                if(pdtc_sff == 0)
-                    pdtc_sff = pdtc_seq_detector[i];
-                else if(pdtc_seq_detector[i] < pdtc_sff)
-                    pdtc_sff = pdtc_seq_detector[i];
-            end
-
-        // Step 3: Sort the sequences after flush
-            pdtc_seq_detector_sorted[i] = pdtc_seq_detector_n[i];
-        end
-
-        for (int i = 0; i < PDTC_ENTRIES; i++)
-            for (int j = 0; j < PDTC_ENTRIES; j++) begin
-                 if(pdtc_seq_detector_sorted[i] < pdtc_seq_detector_sorted[j]) begin
-                    pdtc_temp = pdtc_seq_detector_sorted[i];
-                    pdtc_seq_detector_sorted[i] = pdtc_seq_detector_sorted[j];
-                    pdtc_seq_detector_sorted[j] = pdtc_temp;
-                end
-            end
-
-        // Step 4: Take small after flush(saf)
-        // pdtc_saf = pdtc_seq_detector_sorted[0];
-        for(int i = 0; i < PDTC_ENTRIES; i++)
-          if(pdtc_saf == 0)
-            pdtc_saf = pdtc_seq_detector_sorted[i];
-          else if(pdtc_seq_detector_sorted[i] < pdtc_saf)
-            pdtc_saf = pdtc_seq_detector_sorted[i];
-
-        // Step 5: Take consecutive_big
-        pdtc_consec_big = pdtc_sff;
-        for(int i = 0; i < PDTC_ENTRIES; i++)
-            if(pdtc_seq_detector_sorted[i] == (pdtc_consec_big + 1))
-                pdtc_consec_big = pdtc_seq_detector_sorted[i];
-    end
-
-end
-
-
-logic [$clog2(PDTC_ENTRIES) : 0] pdtc_seq_detector [PDTC_ENTRIES - 1 : 0];
+// ---------------------------PDTC New method started----------------------------------------------
 
 logic [PDTC_ENTRIES - 1 : 0] pdtc_hit_n, pdtc_miss_n;
 logic pdtc_hit_q, pdtc_miss_q;
 
-logic correct_pid;
-assign correct_pid = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && !pid_wider;
-
 logic [PDTC_ENTRIES - 1 : 0] match_pdtc;
-logic ddtc_completed, dpe_high;
-assign ddtc_completed = (ddtc_hit || (ddtc_miss && dc_loaded_with_trans_ppn_q)) && !dc_loaded_with_error_q;
+logic dc_completed, dpe_high;
+assign dc_completed = (ddtc_hit || (ddtc_miss && dc_loaded_with_trans_ppn_q)) && !dc_loaded_with_error_q;
 
 /* When PDTV is 1, the DPE bit may set to 1 to enable the use of 0 as the default value of process_id for 
    translating requests without a valid process_id. */
-assign dpe_high       = !selected_pv && ((ddtc_miss && dc_q.tc.pdtv && dc_q.tc.dpe) || (ddtc_hit && symb_dc.tc.pdtv && symb_dc.tc.dpe));
+assign dpe_high       = !selected_pv && ((ddtc_miss && dc_q.tc.pdtv && dc_q.tc.dpe) || (symb_dc_hit_q && symb_dc.tc.pdtv && symb_dc.tc.dpe));
 
-generate
-for (genvar i  = 0; i < PDTC_ENTRIES; i++ ) begin
-assign match_pdtc[i]  = pdtc_entry_valid[i] && selected_did == pdtc_did[i] && ((dpe_high && pdtc_pid[i] == 0) || selected_pid == pdtc_pid[i]);
+typedef logic [23:0] pdtc_did_entry [PDTC_ENTRIES - 1 : 0];
+pdtc_did_entry pdtc_did_n, pdtc_did_q;
 
-assign pdtc_hit_n[i]  = (correct_pid || dpe_high) && correct_did && req_enable_q && match_pdtc[i] && !pdtc_miss_q;
-assign pdtc_miss_n[i] = ddtc_completed && !((!selected_pv && !dc_q.tc.dpe) || !dc_q.tc.pdtv || !dc_q.fsc.mode) && (correct_pid || dpe_high) && correct_did && req_enable_q && !match_pdtc[i];
+typedef logic [19:0] pdtc_pid_entry [PDTC_ENTRIES - 1 : 0];
+pdtc_pid_entry pdtc_pid_n, pdtc_pid_q;
+
+typedef logic pdtc_valid [PDTC_ENTRIES - 1 : 0];
+pdtc_valid pdtc_valid_n;
+pdtc_valid pdtc_valid_q;
+
+logic pdtc_hit, pdtc_miss;
+
+logic [19:0] sym_pid;
+rv_iommu::pc_t sym_pc;
+
+assmp_5_pc_stable:
+assume property ($stable(sym_pc));
+
+assmp_6_pid_stable:
+assume property ($stable(sym_pid));
+
+logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
+assign pid_wider_when_cache_miss = dc_loaded_with_trans_ppn_q && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
+assign pid_wider_when_cache_hit  = symb_dc_hit_q && symb_dc.tc.pdtv && ((symb_dc.fsc.mode == 1 && |selected_pid[19:8])  || (symb_dc.fsc.mode == 2 && |selected_pid[19:17]));
+
+logic pid_wider;
+assign pid_wider = selected_pv && (pid_wider_when_cache_miss || pid_wider_when_cache_hit);
+
+logic correct_pid;
+assign correct_pid = (dev_tr_req_i.ar_valid || dev_tr_req_i.aw_valid) && !pid_wider;
+
+logic symb_pc_seen, symb_pc_seen_q;
+assign symb_pc_seen = correct_did && req_enable_q && (symb_dc_miss_q && (sym_pid == selected_pid)) || ((symb_dc_hit_q && (sym_pid == selected_pid)));
+
+logic symb_pc_hit, symb_pc_miss, symb_pc_miss_q, symb_pc_hit_q;
+
+logic pc_enable;
+assign pc_enable = !((symb_dc_miss_q && ((!selected_pv && !dc_q.tc.dpe) || !dc_q.tc.pdtv || !dc_q.fsc.mode)) || (symb_dc_hit_q && ((!selected_pv && !symb_dc.tc.dpe) || !symb_dc.tc.pdtv || !symb_dc.fsc.mode))) && (correct_pid || dpe_high);
+
+always_comb begin
+    symb_pc_hit  = symb_pc_hit_q;
+    symb_pc_miss = symb_pc_miss_q;
+    if(symb_pc_seen && req_enable_q && correct_did && correct_pid && pc_enable && $rose(dc_completed)) begin
+        for (int i = 0; i < PDTC_ENTRIES ; i++) begin
+            if(pdtc_valid_q[i] && sym_pid == pdtc_pid_q[i] && sym_did == pdtc_did_q[i] && !symb_pc_hit_q)
+                symb_pc_hit = 1;
+                break;
+        end
+        if(!symb_pc_hit)
+            symb_pc_miss = 1;
+    end
 end
-endgenerate
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni || aw_or_ar_hsk) begin
-        pdtc_hit_q  <= 0;
-        pdtc_miss_q <= 0;
+        symb_pc_hit_q  <= 0;
+        symb_pc_miss_q <= 0;
     end
     else begin
-        pdtc_hit_q  <= pdtc_hit_q  || pdtc_hit_n != 0;
-        pdtc_miss_q <= pdtc_miss_q || pdtc_miss_n == 8'hff;
+        symb_pc_hit_q  <= symb_pc_hit_q  || symb_pc_hit;
+        symb_pc_miss_q <= symb_pc_miss_q || symb_pc_miss;
     end
 
+assrt_3_symb_pdtc_hit:
+assert property (symb_pc_hit_q |-> !riscv_iommu.pdt_walk);
 
-logic [19:0] pdtc_pid [PDTC_ENTRIES - 1 : 0];
-logic [23:0] pdtc_did [PDTC_ENTRIES - 1 : 0];
-logic pdtc_sum [PDTC_ENTRIES - 1 : 0];
-logic [3:0] pdtc_fsc_mode [PDTC_ENTRIES - 1 : 0];
-logic pdtc_ens [PDTC_ENTRIES - 1 : 0];
-logic pdtc_entry_valid [PDTC_ENTRIES - 1 : 0];
+assrt_4_symb_pdtc_miss_when_dc_hit:
+assert property ($rose(symb_pc_miss) && symb_dc_hit_q |-> $rose(riscv_iommu.pdt_walk));
+
+assrt_5_symb_pdtc_miss_when_dc_miss:
+assert property ($rose(symb_pc_miss_q) && symb_dc_miss_q |=> $rose(riscv_iommu.pdt_walk));
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni || aw_or_ar_hsk) begin
+        pdtc_hit  <= 0;
+        pdtc_miss <= 0;
+    end
+    else begin
+        pdtc_hit  <= pdtc_hit  || pdtc_hit_n != 0;
+        pdtc_miss <= pdtc_miss || (pdtc_miss_n == 'hff && !pdtc_hit);
+    end
+
+logic flush_symb;
+assign flush_symb = (riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv && !riscv_iommu.flush_pv) || (riscv_iommu.flush_pdtc && riscv_iommu.flush_pv && sym_did == riscv_iommu.flush_did && sym_pid == riscv_iommu.flush_pid) || (riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv && sym_did == riscv_iommu.flush_did);
+
+logic symb_pc_loaded_with_error, symb_pc_loaded_with_error_q;
+assign symb_pc_loaded_with_error = pc_fsc_active && data_structure.r_hsk && symb_pc_seen && pc_loaded_with_error;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni || aw_or_ar_hsk)
+        symb_pc_loaded_with_error_q <= 0;
+    else
+        symb_pc_loaded_with_error_q <= symb_pc_loaded_with_error_q || symb_pc_loaded_with_error;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni)
+        symb_pc_seen_q <= 0;
+    else if(flush_symb || symb_pc_loaded_with_error || symb_pc_loaded_with_error_q)
+        symb_pc_seen_q <= 0;
+    else
+        symb_pc_seen_q <= symb_pc_seen_q || symb_pc_seen;
+
+
+logic design_pdtc_update;
+assign design_pdtc_update = i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.pdtc_update;
+
+logic update_pdtc;
+assign update_pdtc = symb_pc_seen_q ? $rose(pc_loaded_q) : !symb_pc_seen && design_pdtc_update; // TBD: will add this logic
 
 always @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni)
+    if(!rst_ni) begin
         for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
-            pdtc_pid[i]           <= 0;
-            pdtc_did[i]           <= 0;
-            pdtc_entry_valid[i]   <= 0;
-            pdtc_seq_detector[i]  <= 0;
-            pdtc_sum[i]           <= 0;
-            pdtc_fsc_mode[i]      <= 0;
-            pdtc_ens[i]           <= 0;
-        end 
+            pdtc_did_q[i]           <= 0;
+            pdtc_pid_q[i]           <= 0;
+            pdtc_valid_q[i]         <= 0;
+        end
+    end
+    else
+        for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
+            pdtc_did_q[i]           <= pdtc_did_n[i];
+            pdtc_pid_q[i]           <= pdtc_pid_n[i];
+            pdtc_valid_q[i]         <= pdtc_valid_n[i];
+        end
+end
 
-// If DV is 0, then the inval_ddt invalidates all ddt and PDT entries for all devices
-    else if(riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
-        for (int i = 0; i < PDTC_ENTRIES; i++) begin
-            pdtc_seq_detector[i]  <= 0;
-            pdtc_did[i]           <= 0;
-            pdtc_pid[i]           <= 0;
-            pdtc_sum[i]           <= 0;
-            pdtc_fsc_mode[i]      <= 0;
-            pdtc_entry_valid[i]   <= 0;
-            pdtc_ens[i]           <= 0;
+logic [$clog2(PDTC_ENTRIES) : 0] pdtc_hit_index;
+
+generate
+    for (genvar i = 0; i < PDTC_ENTRIES; i++ ) begin
+        assign match_pdtc[i]  = pdtc_valid_q[i] && selected_did == pdtc_did_q[i] && ((dpe_high && pdtc_pid_q[i] == 0) || (!dpe_high && selected_pid == pdtc_pid_q[i]));
+        assign pdtc_hit_n[i]   = (correct_pid || dpe_high) && correct_did && req_enable_q && match_pdtc[i];
+        assign pdtc_miss_n[i]  = (correct_pid || dpe_high) && correct_did && req_enable_q && !match_pdtc[i];
+    end
+endgenerate
+
+always_comb begin
+    pdtc_hit_index = 0;
+    
+    for (int i  = 0; i < PDTC_ENTRIES; i++ ) begin
+        pdtc_did_n[i]   = pdtc_did_q[i];
+        pdtc_pid_n[i]   = pdtc_pid_q[i];
+        pdtc_valid_n[i] = pdtc_valid_q[i];
+    end
+
+    if($rose(pdtc_hit)) begin
+        for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
+            if(pdtc_hit_n[i] == 1) begin
+                pdtc_hit_index = i;
+                break;
+            end
+        end
+        pdtc_did_n[0]   = pdtc_did_q[pdtc_hit_index];
+        pdtc_pid_n[0]   = pdtc_pid_q[pdtc_hit_index];
+        pdtc_valid_n[0] = pdtc_valid_q[pdtc_hit_index];
+        
+        if(pdtc_valid_q[1]) // For shifting, entry 1 must be valid(or min two entries must be valid)
+            for (int i = 0; i < (PDTC_ENTRIES - 1); i++)
+                if(i <= pdtc_hit_index) begin
+                    pdtc_did_n[i+1]   = pdtc_did_q[i];
+                    pdtc_pid_n[i+1]   = pdtc_pid_q[i];
+                    pdtc_valid_n[i+1] = pdtc_valid_q[i];
+                end
+    end
+
+    if(update_pdtc) begin
+        pdtc_did_n[0]   = selected_did;
+        pdtc_pid_n[0]   = selected_pid;
+        pdtc_valid_n[0] = 1'b1;
+        for (int i = 0; i < (PDTC_ENTRIES - 1); i++) begin
+            pdtc_did_n[i+1]   = pdtc_did_q[i];
+            pdtc_pid_n[i+1]   = pdtc_pid_q[i];
+            pdtc_valid_n[i+1] = pdtc_valid_q[i];
         end
     end
 
-// If DV is 1, then the inval_ddt invalidates cached leaf-level all associated PDT entries
-    else if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
-
-        for(int i = 0; i < PDTC_ENTRIES; i++) begin
-            
-            if(pdtc_sff == 1) begin
-                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
-                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_sff;
-                else 
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
-            end
-
-            else if(pdtc_sff != 0) begin
-                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
-                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_saf;
-                else 
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
-            end
+/* 
+If DV is 0, then the inval_ddt invalidates all ddt and PDT entries for all devices
+riscv_iommu.flush_pv ---->> This is used to difference between IODIR.INVAL_DDT and IODIR.INVAL_PDT
+*/
+    if(riscv_iommu.flush_ddtc && !riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
+        for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
+            pdtc_did_n[i]           = 0;
+            pdtc_valid_n[i]         = 0;
         end
-
-        for (int j = 0; j < PDTC_ENTRIES; j++)
-            if(pdtc_did[j] == riscv_iommu.flush_did && pdtc_entry_valid[j]) begin
-                pdtc_did[j]           <= 0;
-                pdtc_pid[j]           <= 0;
-                pdtc_sum[j]           <= 0;
-                pdtc_fsc_mode[j]      <= 0;
-                pdtc_entry_valid[j]   <= 0;
-                pdtc_ens[j]           <= 0;
-            end
     end
 
     else if(riscv_iommu.flush_pdtc && riscv_iommu.flush_pv) begin
+        for (int i = 0; i < PDTC_ENTRIES; i++)
+            if(pdtc_did_n[i] == riscv_iommu.flush_did && pdtc_pid_n[i] == riscv_iommu.flush_pid && pdtc_valid_n[i]) begin
+                pdtc_did_n[i]           = 0;
+                pdtc_pid_n[i]           = 0;
+                pdtc_valid_n[i]         = 0;
+            end
         
-        for(int i = 0; i < PDTC_ENTRIES; i++) begin
-            if(pdtc_sff == 1) begin
-                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
-                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_sff;
-                else 
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
-            end
+        for (int i = 0; i < (PDTC_ENTRIES - 1); i++)
+            for (int j = i + 1; j < PDTC_ENTRIES; j++) begin
+                if(pdtc_valid_n[i] == 0 && pdtc_valid_n[j] == 1) begin
+                    
+                    pdtc_valid_n[i] = pdtc_valid_n[j];
+                    pdtc_did_n[i]   = pdtc_did_n[j];
 
-            else if(pdtc_sff != 0) begin
-                if(pdtc_seq_detector_n[i] <= pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - 1;
-                else if(pdtc_seq_detector_n[i] > pdtc_consec_big && pdtc_seq_detector_n[i] > pdtc_sff)
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i] - pdtc_saf;
-                else 
-                    pdtc_seq_detector[i] <= pdtc_seq_detector_n[i];
-            end
-        end
-
-        for (int j = 0; j < PDTC_ENTRIES; j++)
-            if(pdtc_did[j] == riscv_iommu.flush_did && pdtc_pid[j] == riscv_iommu.flush_pid && pdtc_entry_valid[j]) begin
-                pdtc_did[j]           <= 0;
-                pdtc_pid[j]           <= 0;
-                pdtc_sum[j]           <= 0;
-                pdtc_fsc_mode[j]      <= 0;
-                pdtc_entry_valid[j]   <= 0;
-                pdtc_ens[j]           <= 0;
-            end     
-    end
-
-    else if(pdtc_miss_q && counter_pc == 1 && wo_data_corruption && !pc_loaded_with_error_captured_q && (translation_req.aw_hsk || translation_req.ar_hsk)) begin
-
-        for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
-            if((pdtc_seq_detector[i] == 0 || pdtc_seq_detector[i] == PDTC_ENTRIES)) begin
-                
-                pdtc_seq_detector[i]  <= 1;
-                pdtc_did[i]           <= selected_did;
-                pdtc_pid[i]           <= selected_pid;
-                pdtc_sum[i]           <= pc_q.ta.sum;
-                pdtc_fsc_mode[i]      <= pc_q.fsc.mode;
-                pdtc_entry_valid[i]   <= 1'b1;
-                pdtc_ens[i]           <= pc_q.ta.ens;
-
-                for (int j = 0; j < PDTC_ENTRIES; j++ )
-                    if(!(pdtc_seq_detector[j] == 0 || pdtc_seq_detector[j] == PDTC_ENTRIES))
-                        pdtc_seq_detector[j] <= pdtc_seq_detector[j] + 1;
-                
-                break;
-            end
-        end
-    end
-
-    else if($rose(pdtc_hit_q)) begin
-
-        for (int i = 0; i < PDTC_ENTRIES; i++ ) begin
-            if(pdtc_hit_n[i] == 1 && pdtc_seq_detector[i] != 1) begin
-                
-                for (int j = 0; j < PDTC_ENTRIES; j++ ) begin
-                    if(pdtc_hit_n[j])
-                        pdtc_seq_detector[j] <= 1;
-                    else if((pdtc_seq_detector[i] == PDTC_ENTRIES) && pdtc_seq_detector[j] != 0)
-                        pdtc_seq_detector[j] <= pdtc_seq_detector[j] - 1;
-                    else if(pdtc_seq_detector[j] != 0)
-                        pdtc_seq_detector[j] <= pdtc_seq_detector[j] + 1;
+                    pdtc_valid_n[j] = 0;
+                    pdtc_did_n[j]   = 0;
+                    break;
                 end
-                break;
+            end 
+    end
+
+// If DV is 1, then the inval_pdt invalidates cached leaf-level all associated PDT entries
+    else if(riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv) begin
+        for (int i = 0; i < PDTC_ENTRIES; i++)
+            if(pdtc_did_n[i] == riscv_iommu.flush_did && pdtc_valid_n[i]) begin
+                pdtc_did_n[i]           = 0;
+                pdtc_pid_n[i]           = 0;
+                pdtc_valid_n[i]         = 0;
             end
-        end
+        
+        for (int i = 0; i < (PDTC_ENTRIES - 1); i++)
+            for (int j = i + 1; j < PDTC_ENTRIES; j++) begin
+                if(pdtc_valid_n[i] == 0 && pdtc_valid_n[j] == 1) begin
+                    
+                    pdtc_valid_n[i] = pdtc_valid_n[j];
+                    pdtc_did_n[i]   = pdtc_did_n[j];
+
+                    pdtc_valid_n[j] = 0;
+                    pdtc_did_n[j]   = 0;
+                    break;
+                end
+            end 
     end
 end
+// ---------------------------PDTC New method Ended----------------------------------------------
 
-// ............................PDTC Cache Ended-------------------------------------------------
 
 //............................IOTLB Started-------------------------------------------------
 logic pte_1s_global;
@@ -935,23 +903,18 @@ end
 logic ready_to_capt_valid_type_disalow, valid_pv_pdtv_zero_captured;
 assign ready_to_capt_valid_type_disalow = !dc_loaded_with_error && !dc_loaded_with_error_q && ((selected_pv && ddtc_hit && !symb_dc.tc.pdtv) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pid_wider || (selected_pv && ((ddtc_miss && (dc_loaded_with_trans_ppn_q || ready_to_load_dc_wo_trans_ppn) && !dc_q.tc.pdtv))))));
 logic su_visor_not_allowed;
-// assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_q && ((pdtc_hit_q && priv_transac && !pdtc_ens[hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && !pc_ta_q.ens && priv_transac)));
+// assign su_visor_not_allowed = !ready_to_capt_valid_type_disalow && !dc_loaded_with_error && !dc_loaded_with_error_q && ((pdtc_hit_q && priv_transac && !pdtc_ens[ddtc_hit_index]) || (wo_data_corruption && ds_resp_i.r.id == 1 && ds_resp_i.r_valid && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && (pc_ta_active && !pc_ta_q.ens && priv_transac)));
 
-logic pid_wider_when_cache_miss, pid_wider_when_cache_hit;
-assign pid_wider_when_cache_miss = ddtc_miss && dc_loaded_with_trans_ppn_q && dc_q.tc.pdtv && ((dc_q.fsc.mode == 1 && |selected_pid[19:8]) || ((dc_q.fsc.mode == 2 && |selected_pid[19:17])));
-assign pid_wider_when_cache_hit = ddtc_hit && symb_dc.tc.pdtv && ((symb_dc.fsc.mode == 1 && |selected_pid[19:8])  || (symb_dc.fsc.mode == 2 && |selected_pid[19:17]));
 
-logic pid_wider;
-assign pid_wider = selected_pv && (pid_wider_when_cache_miss || pid_wider_when_cache_hit);
 
-logic [$clog2(DDTC_ENTRIES) : 0] hit_index;
+logic [$clog2(DDTC_ENTRIES) : 0] ddtc_hit_index;
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
-        hit_index <= 0;
+        ddtc_hit_index <= 0;
     else begin
         for (int i  = 0; i < DDTC_ENTRIES; i++ )
             if(ddtc_hit_n[i] == 1) begin
-               hit_index <= i;
+               ddtc_hit_index <= i;
                break;
             end
     end
@@ -981,10 +944,10 @@ always @(posedge clk_i or negedge rst_ni)
 
 logic ready_to_load_dc_wo_trans_ppn, dc_loaded_wo_trans_ppn_q, ready_to_load_dc_with_trans_ppn, dc_loaded_with_trans_ppn_q, ready_to_laod_pc, pc_loaded_q;
 
-assign ready_to_load_dc_wo_trans_ppn   = (counter_dc == 3) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw && !dc_loaded_with_error && !dc_loaded_with_error_q && !dc_loaded_wo_trans_ppn_q;
-assign ready_to_load_dc_with_trans_ppn = (ready_to_load_dc_wo_trans_ppn || dc_loaded_wo_trans_ppn_q) && (!stage2_enable || (dc_q.tc.pdtv ? ready_to_compl_pdtp_trans : 1)) && !dc_loaded_with_trans_ppn_q;
+assign ready_to_load_dc_wo_trans_ppn   = (counter_dc == 3) && data_structure.r_hsk && last_beat_cdw && !dc_loaded_with_error && !dc_loaded_with_error_q && !dc_loaded_wo_trans_ppn_q;
+assign ready_to_load_dc_with_trans_ppn = (ready_to_load_dc_wo_trans_ppn || dc_loaded_wo_trans_ppn_q) && (!stage2_enable || ((InclPC && dc_q.tc.pdtv) ? ready_to_compl_pdtp_trans : 1)) && !dc_loaded_with_trans_ppn_q;
 
-assign ready_to_laod_pc = pc_fsc_active && data_strcuture.r_hsk_trnsl_compl && !pc_loaded_q && !pc_loaded_with_error && !pc_loaded_with_error_captured_q;
+assign ready_to_laod_pc = pc_fsc_active && data_structure.r_hsk && !pc_loaded_q && !pc_loaded_with_error && !pc_loaded_with_error_captured_q;
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni || aw_or_ar_hsk) begin
@@ -1005,13 +968,13 @@ always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni)
         counter_non_leaf_pc <= 0;
 
-    else if(counter_non_leaf_pc == 1 && ((dc_q.fsc.mode == 2 && ddtc_miss) || (symb_dc.fsc.mode == 2 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 2
+    else if(counter_non_leaf_pc == 1 && ((dc_q.fsc.mode == 2 && ddtc_miss) || (symb_dc.fsc.mode == 2 && ddtc_hit)) && last_beat_cdw && data_structure.r_hsk) // ddtlevel 2
         counter_non_leaf_pc <= 0;
     
-    else if(counter_non_leaf_pc == 2 && ((dc_q.fsc.mode == 3 && ddtc_miss) || (symb_dc.fsc.mode == 3 && ddtc_hit)) && last_beat_cdw && data_strcuture.r_hsk_trnsl_compl) // ddtlevel 3
+    else if(counter_non_leaf_pc == 2 && ((dc_q.fsc.mode == 3 && ddtc_miss) || (symb_dc.fsc.mode == 3 && ddtc_hit)) && last_beat_cdw && data_structure.r_hsk) // ddtlevel 3
         counter_non_leaf_pc <= 0;
     
-    else if(((symb_dc.fsc.mode > 1 && ddtc_hit) || (dc_loaded_with_trans_ppn_q && dc_q.fsc.mode > 1)) && data_strcuture.r_hsk_trnsl_compl && last_beat_cdw)
+    else if(((symb_dc.fsc.mode > 1 && ddtc_hit) || (dc_loaded_with_trans_ppn_q && dc_q.fsc.mode > 1)) && data_structure.r_hsk && last_beat_cdw)
         counter_non_leaf_pc <= counter_non_leaf_pc + 1;
 
 logic dc_miss_n, dc_hit_n, dc_miss_q, dc_hit_q;
@@ -1036,7 +999,7 @@ always @(posedge clk_i or negedge rst_ni)
         counter_pc <= 0;
     else if(counter_pc == 1 && !aw_or_ar_hsk)
         counter_pc <= 1;
-    else if((dc_loaded_with_trans_ppn_q || (ddtc_hit && symb_dc.tc.pdtv)) && (dc_hit_q || dc_miss_n) && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1)
+    else if((dc_loaded_with_trans_ppn_q || (ddtc_hit && symb_dc.tc.pdtv)) && (dc_hit_q || dc_miss_n) && data_structure.r_hsk && ds_resp_i.r.id == 1)
         counter_pc <= 1;
 
 logic pc_ta_active, pc_fsc_active;
@@ -1063,14 +1026,14 @@ logic ready_to_capt_pdte_misconfig, pdte_misconfig_captured;
 assign ready_to_capt_pdte_misconfig = pdte_accessed && !ready_to_capt_pdte_not_valid && (|ds_resp_i.r.data[9:1] || |ds_resp_i.r.data[63:54]);
 
 logic pdte_accessed; // when this is high, pdte is accessed
-assign pdte_accessed = dc_loaded_with_trans_ppn_q && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1 && !dc_loaded_with_error && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
+assign pdte_accessed = (dc_loaded_with_trans_ppn_q || symb_dc_hit) && ds_resp_i.r.resp == axi_pkg::RESP_OKAY && data_structure.r_hsk && ds_resp_i.r.id == 1 && counter_pc == 0 && ((dc_q.fsc.mode == 3 && counter_non_leaf_pc < 2) || (!selected_pid[19:17] && dc_q.fsc.mode == 2 && !counter_non_leaf_pc));
 
 always @(posedge clk_i or negedge rst_ni)
     if(!rst_ni) begin
         pdte_misconfig_captured   <= 0;
         pdte_not_valid_captured   <= 0;
     end
-    else if(ds_resp_i.r.last && data_strcuture.r_hsk_trnsl_compl && ds_resp_i.r.id == 1) begin
+    else if(ds_resp_i.r.last && data_structure.r_hsk && ds_resp_i.r.id == 1) begin
         pdte_misconfig_captured   <= 0;        
         pdte_not_valid_captured   <= 0;  
     end
@@ -1188,7 +1151,7 @@ end
 
 int current_level;
 logic decr_crnt_lvl;
-assign decr_crnt_lvl = pte_active && !ready_to_capt_pf_excep && !ready_to_capt_data_corrup_ptw && !pte.r && !pte.x && data_strcuture.r_hsk_trnsl_compl;
+assign decr_crnt_lvl = pte_active && !ready_to_capt_pf_excep && !ready_to_capt_data_corrup_ptw && !pte.r && !pte.x && data_structure.r_hsk;
 
 always @(posedge clk_i or negedge rst_ni) begin
     if(!rst_ni)
@@ -1203,6 +1166,7 @@ logic pdtv_enable, pdtc_stage_1_enable, stage1_enable, stage2_enable;
 
 assign pdtv_enable = (ddtc_miss && dc_q.tc.pdtv) || (ddtc_hit && symb_dc.tc.pdtv);
 
+//tbd: change the pdtc_hit_q
 assign pdtc_stage_1_enable = pdtv_enable && ((pdtc_miss_q && pc_q.fsc.mode != 0) || (pdtc_hit_q && symb_dc.fsc.mode != 0));
 
 assign stage1_enable = pdtc_stage_1_enable || (!pdtv_enable && ((ddtc_hit && symb_dc.fsc.mode != 0) || (ddtc_miss && dc_q.fsc.mode != 0)));
@@ -1345,9 +1309,72 @@ assrt_63_addr:
 assert property (compare_addr |-> riscv_iommu.spaddr == physical_addrs);
 
 
-//----------------------------PTW Ended-----------------------------------------------
+//----------------------------- PTW Ended-----------------------------------------------
+
+//------------------------------Data structure interface checks Started-----------------
+logic [2:0] dc_lvl_n, dc_lvl_q;
+logic dc_lvl_decr;
+assign dc_lvl_decr = symb_dc_miss_q && data_structure.r_hsk && last_beat_cdw;
+
+always @(posedge clk_i or negedge rst_ni)
+    if(!rst_ni)
+        dc_lvl_q <= 0;
+    else
+        dc_lvl_q <= dc_lvl_n;
+
+always_comb begin
+    dc_lvl_n   = dc_lvl_q;
+    cdw_dc_ppn = 0;
+
+    if(dc_lvl_n == 0 && req_enable_q) begin
+        dc_lvl_n = riscv_iommu.ddtp.iommu_mode.q;
+        cdw_dc_ppn = riscv_iommu.ddtp.ppn;
+    end
+        
+    
+    if(req_enable_q && dc_lvl_q > 2)
+        dc_lvl_n = dc_lvl_q - dc_lvl_decr;
+
+end
+
+always @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni)
+        cdw_dc_ppn <= 0;
+    else if(riscv_iommu.ddtp.iommu_mode.q == 2)
+        cdw_pc_ppn <= riscv_iommu.ddtp.ppn;
+    else if(dc_lvl_q > 2 && riscv_iommu.ddtp.iommu_mode.q > 2 && dc_lvl_decr)
+        cdw_pc_ppn <= ;
+end
+
+//------------------------------Data structure interface checks Ended-------------------
+
+//----------------------------- data structure end to end checks Started-------------------------------
+`define cq_state_q riscv_iommu.i_rv_iommu_sw_if_wrapper.i_rv_iommu_cq_handler.state_q
+
+/* From data structure command queue only request for data when state_q is fetch and as we are not verifying so internal 
+signal is taken from cq_handler module in the below assertions 
+*/
+logic ds_mode_lvl2;
+assign ds_mode_lvl2 = $rose(symb_dc_miss_q) && `cq_state_q != 1 && riscv_iommu.ddtp.iommu_mode == 2;
+
+assrt_end_chks_1_ds_ar_chan_valid:
+assert property (ds_mode_lvl2 |-> `ds_intf.ar_valid);
+
+assrt_end_chks_2_ds_ar_chan_id: // id should be 1 for ddt walk
+assert property (ds_mode_lvl2 |-> `ds_intf.ar.id == 1);
+
+assrt_end_chks_3_ds_ar_chan_len: // len should be 3 without msi
+assert property (ds_mode_lvl2 |-> `ds_intf.ar.len == 3);
+
+assrt_end_chks_4_ds_ar_chan_burst: // burst should be incr
+assert property (ds_mode_lvl2 |-> `ds_intf.ar.burst == 1);
 
 
+// TBD: Address calculation
+// assrt_end_chks_5_ds_ar_chan_addrs:
+// assert property ($rose(symb_dc_miss_q) && riscv_iommu.ddtp.iommu_mode == 2 |-> `ds_intf.ar.addr == );
+
+//----------------------------- END to END checks Ended---------------------------------
 
 //----------------------------- Assertion Started----------------------------------------
 
@@ -1443,14 +1470,14 @@ assert property ($rose(ready_to_capt_valid_type_disalow) && last_beat_cdw |=> ##
 assrt_21_type_disallow_error:
 assert property ($rose(ready_to_capt_valid_type_disalow) && last_beat_cdw |=> ##1 riscv_iommu.cause_code == rv_iommu::TRANS_TYPE_DISALLOWED);
 
-assrt_22_pdt_walk: // if data is not present, there will be pdt_walk
-assert property ($rose(pdtc_miss_q) |-> riscv_iommu.pdt_walk);
+// assrt_22_pdt_walk: // if data is not present, there will be pdt_walk
+// assert property ($rose(pdtc_miss_q) |-> riscv_iommu.pdt_walk);
 
-assrt_23_pdt_walk: 
-assert property (riscv_iommu.pdt_walk |-> (pdtc_miss_q));
+// assrt_23_pdt_walk: 
+// assert property (riscv_iommu.pdt_walk |-> (pdtc_miss_q));
 
-assrt_24_pdt_walk_off: // if data is present, there will be no pdt_walk
-assert property ($rose(pdtc_hit_q) |=> !riscv_iommu.pdt_walk);
+// assrt_24_pdt_walk_off: // if data is present, there will be no pdt_walk
+// assert property ($rose(pdtc_hit_q) |=> !riscv_iommu.pdt_walk);
 
 assrt_25_pdte_not_valid:
 assert property (ready_to_capt_pdte_not_valid |=> riscv_iommu.trans_error && riscv_iommu.cause_code == rv_iommu::PDT_ENTRY_INVALID);
@@ -1620,9 +1647,4 @@ cover property (stage1_enable && stage2_enable && riscv_iommu.trans_valid);
 cover_16_tlb_hit:
 cover property (stage1_enable && stage2_enable && i_rv_iommu_translation_wrapper.gen_pc_support.i_rv_iommu_tw_sv39x4_pc.i_rv_iommu_iotlb_sv39x4.lu_hit_o);
 
-cover_17_pdtc_cache_seq_check:
-cover property (pdtc_seq_detector[0] == 1 && pdtc_seq_detector[1] == 2 && riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv |=> pdtc_seq_detector[1] == 1 && pdtc_entry_valid[1]);
-
-cover_18_pdtc_cache_seq_check:
-cover property (pdtc_seq_detector[0] == 1 && pdtc_seq_detector[1] == 2 && riscv_iommu.flush_ddtc && riscv_iommu.flush_dv && !riscv_iommu.flush_pv);
 //-----------------------------Cover CDW Ended---------------------------------------------
